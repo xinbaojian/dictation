@@ -69,6 +69,21 @@ fn has_text_char(s: &str) -> bool {
     })
 }
 
+/// 解析 "0,2" 这样的字下标串，非法项直接忽略（存储格式见 `format_char_indices`）
+pub fn parse_char_indices(raw: &str) -> Vec<i64> {
+    raw.split(',')
+        .filter_map(|s| s.trim().parse::<i64>().ok())
+        .collect()
+}
+
+/// 字下标列表 → "0,2"：升序去重，空列表写成空串
+pub fn format_char_indices(chars: &[i64]) -> String {
+    let mut sorted: Vec<i64> = chars.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    sorted.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(",")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,5 +137,14 @@ mod tests {
     #[test]
     fn full_width_space_trimmed() {
         assert_eq!(normalize_word("　春天　"), "春天");
+    }
+
+    #[test]
+    fn char_indices_round_trip() {
+        assert_eq!(format_char_indices(&[1, 0, 1]), "0,1");
+        assert_eq!(format_char_indices(&[]), "");
+        assert_eq!(parse_char_indices("0,1"), vec![0, 1]);
+        assert_eq!(parse_char_indices(""), Vec::<i64>::new());
+        assert_eq!(parse_char_indices(" 2 , x ,3"), vec![2, 3], "非法项忽略");
     }
 }

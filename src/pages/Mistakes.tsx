@@ -9,6 +9,36 @@ interface MistakesProps {
   onPrint: (groupId: number | null, title: string) => void;
 }
 
+/** 与批改页一致：标红的字 = 历次批改里标过「不会写」的字 */
+function MistakeWord({ word }: { word: Mistake }) {
+  const chars = [...word.text];
+  const marked = word.wrongChars.filter((i) => i >= 0 && i < chars.length);
+  const label =
+    marked.length === 0
+      ? word.wholeWordWrong > 0
+        ? "整词错"
+        : ""
+      : marked.length === chars.length
+        ? "整词错"
+        : "错字：" + marked.map((i) => chars[i]).join("、");
+
+  return (
+    <td className="py-2.5 pl-8">
+      <span className="text-[15px] text-stone-800">
+        {chars.map((ch, i) => (
+          <span
+            key={i}
+            className={marked.includes(i) ? "rounded bg-rose-200/70 px-0.5 text-rose-800" : ""}
+          >
+            {ch}
+          </span>
+        ))}
+      </span>
+      {label && <span className="mt-0.5 block text-[11px] text-rose-500">{label}</span>}
+    </td>
+  );
+}
+
 export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesProps) {
   const [mistakes, setMistakes] = useState<Mistake[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -151,7 +181,7 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
             <tbody>
               {mistakes.map((word) => (
                 <tr key={word.id} className="group border-t border-stone-100 hover:bg-stone-50/70">
-                  <td className="py-2.5 pl-8 text-[15px] text-stone-800">{word.text}</td>
+                  <MistakeWord word={word} />
                   <td className="py-2.5 text-xs text-stone-500">
                     {word.groupName}
                   </td>

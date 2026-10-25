@@ -1,4 +1,5 @@
 use crate::domain::sampler::{self, Scope};
+use crate::domain::text::{format_char_indices, parse_char_indices};
 use crate::error::{AppError, AppResult};
 use crate::repo::{settings, word_progress};
 use rand::seq::SliceRandom;
@@ -78,19 +79,6 @@ pub struct WrongMark {
     pub item_id: i64,
     #[serde(default)]
     pub chars: Vec<i64>,
-}
-
-fn parse_chars(raw: &str) -> Vec<i64> {
-    raw.split(',')
-        .filter_map(|s| s.trim().parse::<i64>().ok())
-        .collect()
-}
-
-fn format_chars(chars: &[i64]) -> String {
-    let mut sorted: Vec<i64> = chars.to_vec();
-    sorted.sort_unstable();
-    sorted.dedup();
-    sorted.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(",")
 }
 
 pub fn group_label(config: &SessionConfig) -> String {
@@ -236,7 +224,7 @@ pub fn get(conn: &Connection, id: i64) -> AppResult<SessionDto> {
                 text: r.get(3)?,
                 skip_marked: r.get::<_, i64>(4)? == 1,
                 result: r.get(5)?,
-                wrong_chars: parse_chars(&r.get::<_, String>(6)?),
+                wrong_chars: parse_char_indices(&r.get::<_, String>(6)?),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -335,7 +323,7 @@ pub fn submit_review(
     // item_id -> 不会写的字下标（空串 = 整词算错）
     let mut wrong_map: HashMap<i64, String> = HashMap::new();
     for mark in wrong_items {
-        wrong_map.insert(mark.item_id, format_chars(&mark.chars));
+        wrong_map.insert(mark.item_id, format_char_indices(&mark.chars));
     }
     let streak = settings::load(conn)?.streak_to_master;
     let mut graduated = 0;

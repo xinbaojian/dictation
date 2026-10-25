@@ -101,6 +101,10 @@ export interface Mistake {
   wrongCount: number;
   correctStreak: number;
   lastPracticedAt: string | null;
+  /** 历次批改中标记过「不会写」的字下标，对应 text 的字符位置 */
+  wrongChars: number[];
+  /** 整词算错（批改时没标具体字）的次数 */
+  wholeWordWrong: number;
 }
 
 export interface Settings {

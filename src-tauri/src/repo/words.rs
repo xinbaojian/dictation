@@ -1,7 +1,8 @@
-use crate::domain::text::normalize_word;
+use crate::domain::text::{normalize_word, parse_char_indices};
 use crate::error::{is_unique_violation, AppError, AppResult};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -167,10 +168,56 @@ pub struct MistakeDto {
     pub wrong_count: i64,
     pub correct_streak: i64,
     pub last_practiced_at: Option<String>,
+    /// 历次批改中标记过「不会写」的字下标（升序去重，对应 text 的字符位置）
+    pub wrong_chars: Vec<i64>,
+    /// 整词算错（批改时没标具体字）的次数
+    pub whole_word_wrong: i64,
+}
+
+/// 一个错词的错字统计
+#[derive(Default)]
+struct CharMarks {
+    /// 字下标 -> 标错次数（BTreeMap 天然按位置升序）
+    counts: BTreeMap<i64, i64>,
+    /// 整词算错的次数
+    whole: i64,
+}
+
+/// 聚合每个错词「标错过的字」：只统计 `result = 'wrong'` 的批改条目
+fn load_char_marks(
+    conn: &Connection,
+    group_id: Option<i64>,
+) -> AppResult<HashMap<i64, CharMarks>> {
+    let mut stmt = conn.prepare(
+        "SELECT i.word_id, i.wrong_chars
+         FROM session_items i
+         JOIN words w ON w.id = i.word_id
+         WHERE i.result = 'wrong' AND w.status = 'learning'
+           AND (?1 IS NULL OR w.group_id = ?1)",
+    )?;
+    let rows = stmt.query_map(params![group_id], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+    })?;
+    let mut marks: HashMap<i64, CharMarks> = HashMap::new();
+    for row in rows {
+        let (word_id, raw) = row?;
+        let entry = marks.entry(word_id).or_default();
+        let chars = parse_char_indices(&raw);
+        if chars.is_empty() {
+            // 没标具体字 = 整词算错
+            entry.whole += 1;
+        } else {
+            for c in chars {
+                *entry.counts.entry(c).or_insert(0) += 1;
+            }
+        }
+    }
+    Ok(marks)
 }
 
 /// 错题本：状态为 learning 的词，按错误次数降序
 pub fn list_mistakes(conn: &Connection, group_id: Option<i64>) -> AppResult<Vec<MistakeDto>> {
+    let marks = load_char_marks(conn, group_id)?;
     let mut stmt = conn.prepare(
         "SELECT w.id, w.text, w.group_id, g.code, g.name,
                 w.wrong_count, w.correct_streak, w.last_practiced_at
@@ -189,9 +236,24 @@ pub fn list_mistakes(conn: &Connection, group_id: Option<i64>) -> AppResult<Vec<
             wrong_count: r.get(5)?,
             correct_streak: r.get(6)?,
             last_practiced_at: r.get(7)?,
+            wrong_chars: Vec::new(),
+            whole_word_wrong: 0,
         })
     })?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    let mut out = rows.collect::<Result<Vec<_>, _>>()?;
+    for dto in &mut out {
+        let Some(mark) = marks.get(&dto.id) else { continue };
+        // 词条改短了以后老下标会越界，直接丢掉，免得高亮到不存在的位置
+        let len = dto.text.chars().count() as i64;
+        dto.wrong_chars = mark
+            .counts
+            .keys()
+            .copied()
+            .filter(|i| *i >= 0 && *i < len)
+            .collect();
+        dto.whole_word_wrong = mark.whole;
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -246,5 +308,82 @@ mod tests {
         let w = add(&conn, gid, "春天", None).unwrap();
         delete(&conn, w.id).unwrap();
         assert!(list(&conn, gid).unwrap().is_empty());
+    }
+
+    /// 走一遍「默写 → 批改」，返回被标错的那个词
+    fn mark_wrong(conn: &Connection, gid: i64, text: &str, chars: Vec<i64>) -> i64 {
+        let sid = crate::repo::sessions::create(conn, &[gid], crate::domain::sampler::Scope::All, 0, false)
+            .unwrap();
+        let session = crate::repo::sessions::get(conn, sid).unwrap();
+        let item = session.items.iter().find(|i| i.text == text).unwrap().id;
+        crate::repo::sessions::finish_quiz(conn, sid).unwrap();
+        crate::repo::sessions::submit_review(
+            conn,
+            sid,
+            &[crate::repo::sessions::WrongMark { item_id: item, chars }],
+        )
+        .unwrap();
+        session.items.iter().find(|i| i.text == text).unwrap().word_id
+    }
+
+    #[test]
+    fn mistake_carries_wrong_char_indices() {
+        let (conn, gid) = setup();
+        add(&conn, gid, "春天", None).unwrap();
+        let wid = mark_wrong(&conn, gid, "春天", vec![1]);
+
+        let m = list_mistakes(&conn, None)
+            .unwrap()
+            .into_iter()
+            .find(|x| x.id == wid)
+            .unwrap();
+        assert_eq!(m.wrong_chars, vec![1]);
+        assert_eq!(m.whole_word_wrong, 0);
+    }
+
+    #[test]
+    fn wrong_chars_accumulate_across_sessions() {
+        let (conn, gid) = setup();
+        add(&conn, gid, "春天", None).unwrap();
+        let wid = mark_wrong(&conn, gid, "春天", vec![0]);
+        mark_wrong(&conn, gid, "春天", vec![1, 1]);
+
+        let m = list_mistakes(&conn, None)
+            .unwrap()
+            .into_iter()
+            .find(|x| x.id == wid)
+            .unwrap();
+        assert_eq!(m.wrong_chars, vec![0, 1], "多次批改标过的字要合并且升序");
+        assert_eq!(m.wrong_count, 2);
+    }
+
+    #[test]
+    fn whole_word_wrong_without_chars() {
+        let (conn, gid) = setup();
+        add(&conn, gid, "春天", None).unwrap();
+        let wid = mark_wrong(&conn, gid, "春天", vec![]);
+
+        let m = list_mistakes(&conn, None)
+            .unwrap()
+            .into_iter()
+            .find(|x| x.id == wid)
+            .unwrap();
+        assert!(m.wrong_chars.is_empty(), "整词错没有具体字");
+        assert_eq!(m.whole_word_wrong, 1);
+    }
+
+    #[test]
+    fn stale_char_indices_dropped_after_text_shortened() {
+        let (conn, gid) = setup();
+        add(&conn, gid, "春天", None).unwrap();
+        let wid = mark_wrong(&conn, gid, "春天", vec![0, 1]);
+        update(&conn, wid, "春", None).unwrap();
+
+        let m = list_mistakes(&conn, None)
+            .unwrap()
+            .into_iter()
+            .find(|x| x.id == wid)
+            .unwrap();
+        assert_eq!(m.wrong_chars, vec![0], "越界的老下标应被丢掉");
     }
 }
