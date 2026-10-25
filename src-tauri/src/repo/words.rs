@@ -49,6 +49,22 @@ pub fn list(conn: &Connection, group_id: i64) -> AppResult<Vec<WordDto>> {
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+/// 含所有子分组的词条
+pub fn list_deep(conn: &Connection, group_id: i64) -> AppResult<Vec<WordDto>> {
+    let mut stmt = conn.prepare(
+        "WITH RECURSIVE sub(id) AS (
+            SELECT ?1
+            UNION ALL
+            SELECT g.id FROM groups g JOIN sub ON g.parent_id = sub.id
+         )
+         SELECT id, group_id, text, note, status, wrong_count, correct_streak, last_practiced_at
+         FROM words WHERE group_id IN (SELECT id FROM sub)
+         ORDER BY id ASC",
+    )?;
+    let rows = stmt.query_map(params![group_id], map_row)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
 pub fn get(conn: &Connection, id: i64) -> AppResult<WordDto> {
     conn.query_row(SELECT_ONE, params![id], map_row)
         .map_err(|e| match e {
@@ -185,7 +201,7 @@ mod tests {
 
     fn setup() -> (Connection, i64) {
         let conn = db::open_memory();
-        let g = crate::repo::groups::create(&conn, "1", "第一单元").unwrap();
+        let g = crate::repo::groups::create(&conn, None, "1", "第一单元").unwrap();
         (conn, g.id)
     }
 

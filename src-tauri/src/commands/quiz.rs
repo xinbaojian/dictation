@@ -1,6 +1,6 @@
 use crate::domain::sampler::{self, Scope};
 use crate::error::AppResult;
-use crate::repo::sessions::{self, ReviewResult, SessionDto, SessionSummaryDto};
+use crate::repo::sessions::{self, ReviewResult, SessionDto, SessionSummaryDto, WrongMark};
 use crate::repo::words::{self, MistakeDto};
 use crate::repo::word_progress;
 use crate::AppState;
@@ -70,10 +70,10 @@ pub fn abandon_session(state: State<'_, AppState>, id: i64) -> AppResult<()> {
 pub fn submit_review(
     state: State<'_, AppState>,
     session_id: i64,
-    wrong_item_ids: Vec<i64>,
+    wrong_items: Vec<WrongMark>,
 ) -> AppResult<ReviewResult> {
     let conn = state.conn()?;
-    sessions::submit_review(&conn, session_id, &wrong_item_ids)
+    sessions::submit_review(&conn, session_id, &wrong_items)
 }
 
 #[tauri::command]

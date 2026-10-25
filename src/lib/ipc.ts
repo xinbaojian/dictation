@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BackupInfo,
   Group,
+  GroupDeleteResult,
   ImportResult,
   ImportSummary,
   Mistake,
@@ -11,17 +12,19 @@ import type {
   Settings,
   SplitResult,
   Word,
+  WrongMark,
 } from "../types";
 
 // 所有后端调用集中在此，命令名与 Rust commands/ 一一对应
 export const api = {
   // 词表
   listGroups: () => invoke<Group[]>("list_groups"),
-  createGroup: (code: string, name: string) => invoke<Group>("create_group", { code, name }),
+  createGroup: (parentId: number | null, code: string, name: string) =>
+    invoke<Group>("create_group", { parentId, code, name }),
   updateGroup: (id: number, code: string, name: string) =>
     invoke<Group>("update_group", { id, code, name }),
-  deleteGroup: (id: number) => invoke<number>("delete_group", { id }),
-  listWords: (groupId: number) => invoke<Word[]>("list_words", { groupId }),
+  deleteGroup: (id: number) => invoke<GroupDeleteResult>("delete_group", { id }),
+  listWords: (groupId: number, deep = false) => invoke<Word[]>("list_words", { groupId, deep }),
   addWord: (groupId: number, text: string, note: string | null) =>
     invoke<Word>("add_word", { groupId, text, note }),
   updateWord: (id: number, text: string, note: string | null) =>
@@ -42,8 +45,8 @@ export const api = {
     invoke<void>("update_session_progress", { sessionId, currentSeq, skipItemId }),
   finishSession: (id: number) => invoke<Session>("finish_session", { id }),
   abandonSession: (id: number) => invoke<void>("abandon_session", { id }),
-  submitReview: (sessionId: number, wrongItemIds: number[]) =>
-    invoke<ReviewResult>("submit_review", { sessionId, wrongItemIds }),
+  submitReview: (sessionId: number, wrongItems: WrongMark[]) =>
+    invoke<ReviewResult>("submit_review", { sessionId, wrongItems }),
   retrySession: (id: number) => invoke<Session>("retry_session", { id }),
   listSessions: (limit: number) => invoke<SessionSummary[]>("list_sessions", { limit }),
 

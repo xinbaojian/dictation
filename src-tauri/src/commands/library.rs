@@ -14,9 +14,14 @@ pub fn list_groups(state: State<'_, AppState>) -> AppResult<Vec<GroupDto>> {
 }
 
 #[tauri::command]
-pub fn create_group(state: State<'_, AppState>, code: String, name: String) -> AppResult<GroupDto> {
+pub fn create_group(
+    state: State<'_, AppState>,
+    parent_id: Option<i64>,
+    code: String,
+    name: String,
+) -> AppResult<GroupDto> {
     let conn = state.conn()?;
-    groups::create(&conn, &code, &name)
+    groups::create(&conn, parent_id, &code, &name)
 }
 
 #[tauri::command]
@@ -31,17 +36,26 @@ pub fn update_group(
 }
 
 #[tauri::command]
-pub fn delete_group(state: State<'_, AppState>, id: i64) -> AppResult<i64> {
+pub fn delete_group(state: State<'_, AppState>, id: i64) -> AppResult<groups::DeleteResult> {
     let conn = state.conn()?;
     groups::delete(&conn, id)
 }
 
 // ---------- 词条 ----------
 
+/// deep = true 时包含所有子分组的词条（打印整册用）
 #[tauri::command]
-pub fn list_words(state: State<'_, AppState>, group_id: i64) -> AppResult<Vec<WordDto>> {
+pub fn list_words(
+    state: State<'_, AppState>,
+    group_id: i64,
+    deep: Option<bool>,
+) -> AppResult<Vec<WordDto>> {
     let conn = state.conn()?;
-    words::list(&conn, group_id)
+    if deep.unwrap_or(false) {
+        words::list_deep(&conn, group_id)
+    } else {
+        words::list(&conn, group_id)
+    }
 }
 
 #[tauri::command]

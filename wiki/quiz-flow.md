@@ -26,7 +26,7 @@ related: [data-model.md, decisions.md]
 
 | 操作 | 行为 |
 |---|---|
-| 点击词语区 / 空格 | 揭示词语，`maskSeconds` 秒后自动遮罩 |
+| 进入新词 | 自动显示词语（家长可直接读），`maskSeconds` 秒后自动遮罩；点击/空格可随时重新显示并重新计时 |
 | 下一个（空格） | `update_session_progress(id, index+1, null)` |
 | 不会（Enter） | `update_session_progress(id, index+1, item.id)` → 该 item `skip_marked=1` |
 | 上一个（←） | 仅本地回看，不回退 `current_seq` |
@@ -40,6 +40,7 @@ related: [data-model.md, decisions.md]
 ## 四、批改（`pages/Review.tsx` → `repo/sessions.rs::submit_review`）
 
 1. 前端默认全对，`skip_marked` 的词预置为错
+2. 标错后可再点词里的具体字，记录「不会写的字」下标（空 = 整词错）；仅用于复盘，不影响错题本粒度
 2. 提交时逐条写 `result`，并调用 `word_progress::mark_wrong / mark_correct`
 3. 会话落 `status='finished'`、`wrong_total`、`finished_at`
 4. 返回 `{ wrong, correct, graduated }`，`graduated` 是本次移出错题本的词数，前端直接提示

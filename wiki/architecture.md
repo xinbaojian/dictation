@@ -27,7 +27,7 @@ React 页面 ──invoke──> commands/*.rs ──> repo/*.rs ──> rusqlit
 | 字段 | 作用 |
 |---|---|
 | `db: Mutex<Connection>` | 单连接 + WAL。单机单用户，不需要连接池 |
-| `data_dir: PathBuf` | `app_data_dir()`，备份写到这里 |
+| `data_dir: PathBuf` | 程序同级目录（不可写则回落 `app_data_dir()`），库与备份都放这里 |
 | `speaker: Arc<dyn Speaker>` | TTS 预留位，V1 注入 `NullSpeaker` |
 
 命令拿连接统一走 `AppState::conn()`，锁中毒会返回中文错误而不是 panic。

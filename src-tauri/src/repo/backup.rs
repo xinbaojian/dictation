@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-const VERSION: i32 = 1;
+const VERSION: i32 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,6 +18,9 @@ struct BackupFile {
 struct BackupGroup {
     code: String,
     name: String,
+    /// 从根到叶的分组名，如 ["二年级上册", "第一单元"]；v1 备份没有这个字段
+    #[serde(default)]
+    path: Vec<String>,
     words: Vec<BackupWord>,
 }
 
@@ -58,6 +61,7 @@ pub fn create(conn: &Connection, data_dir: &Path) -> AppResult<String> {
     let stamp: String =
         conn.query_row("SELECT strftime('%Y%m%d-%H%M%S','now')", [], |r| r.get(0))?;
 
+    let meta = crate::repo::groups::list(conn)?;
     let mut groups = Vec::new();
     {
         let mut stmt = conn.prepare("SELECT id, code, name FROM groups ORDER BY sort_order, id")?;
@@ -66,6 +70,11 @@ pub fn create(conn: &Connection, data_dir: &Path) -> AppResult<String> {
         })?;
         for row in rows {
             let (group_id, code, name) = row?;
+            let path = meta
+                .iter()
+                .find(|g| g.id == group_id)
+                .map(|g| g.path_segments.clone())
+                .unwrap_or_else(|| vec![name.clone()]);
             let mut wstmt = conn.prepare(
                 "SELECT text, note, status, wrong_count, correct_streak
                  FROM words WHERE group_id = ?1 ORDER BY id",
@@ -81,7 +90,7 @@ pub fn create(conn: &Connection, data_dir: &Path) -> AppResult<String> {
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
-            groups.push(BackupGroup { code, name, words });
+            groups.push(BackupGroup { code, name, path, words });
         }
     }
 
@@ -119,7 +128,27 @@ pub fn list(data_dir: &Path) -> AppResult<Vec<BackupInfo>> {
     Ok(out)
 }
 
-/// 非破坏性合并：同编号同名分组视为同一个分组，已存在的词条一律跳过，不覆盖现有进度
+fn find_child(conn: &Connection, parent: Option<i64>, name: &str) -> AppResult<Option<i64>> {
+    let found: Option<i64> = match parent {
+        Some(parent_id) => conn
+            .query_row(
+                "SELECT id FROM groups WHERE parent_id = ?1 AND name = ?2 LIMIT 1",
+                params![parent_id, name],
+                |r| r.get(0),
+            )
+            .ok(),
+        None => conn
+            .query_row(
+                "SELECT id FROM groups WHERE parent_id IS NULL AND name = ?1 LIMIT 1",
+                params![name],
+                |r| r.get(0),
+            )
+            .ok(),
+    };
+    Ok(found)
+}
+
+/// 非破坏性合并：按路径逐级匹配分组，同名的就复用；已存在的词条一律跳过，不覆盖进度
 pub fn import(conn: &Connection, path: &str) -> AppResult<ImportSummary> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| AppError::msg(format!("读取备份文件失败：{e}")))?;
@@ -137,33 +166,50 @@ pub fn import(conn: &Connection, path: &str) -> AppResult<ImportSummary> {
     };
     let tx = conn.unchecked_transaction()?;
     for group in payload.groups {
-        let existing: Option<i64> = tx
-            .query_row(
-                "SELECT id FROM groups WHERE code = ?1 AND name = ?2",
-                params![group.code, group.name],
-                |r| r.get(0),
-            )
-            .ok();
-        let group_id = match existing {
-            Some(id) => {
-                summary.groups_merged += 1;
-                id
-            }
-            None => {
-                let sort_order: i64 = tx.query_row(
-                    "SELECT COALESCE(MAX(sort_order), 0) + 10 FROM groups",
-                    [],
-                    |r| r.get(0),
-                )?;
-                tx.execute(
-                    "INSERT INTO groups (code, name, sort_order, created_at)
-                     VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
-                    params![group.code, group.name, sort_order],
-                )?;
-                summary.groups_added += 1;
-                tx.last_insert_rowid()
-            }
+        let segments = if group.path.is_empty() {
+            vec![group.name.clone()]
+        } else {
+            group.path.clone()
         };
+
+        let mut parent: Option<i64> = None;
+        for (index, segment) in segments.iter().enumerate() {
+            let is_leaf = index + 1 == segments.len();
+            match find_child(&tx, parent, segment)? {
+                Some(id) => {
+                    summary.groups_merged += 1;
+                    parent = Some(id);
+                }
+                None => {
+                    let sort_order: i64 = match parent {
+                        Some(p) => tx.query_row(
+                            "SELECT COALESCE(MAX(sort_order), 0) + 10 FROM groups WHERE parent_id = ?1",
+                            params![p],
+                            |r| r.get(0),
+                        )?,
+                        None => tx.query_row(
+                            "SELECT COALESCE(MAX(sort_order), 0) + 10 FROM groups WHERE parent_id IS NULL",
+                            [],
+                            |r| r.get(0),
+                        )?,
+                    };
+                    let code = if is_leaf {
+                        group.code.clone()
+                    } else {
+                        (sort_order / 10).to_string()
+                    };
+                    tx.execute(
+                        "INSERT INTO groups (parent_id, code, name, sort_order, created_at)
+                         VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+                        params![parent, code, segment, sort_order],
+                    )?;
+                    summary.groups_added += 1;
+                    parent = Some(tx.last_insert_rowid());
+                }
+            }
+        }
+        let group_id = parent.unwrap();
+
         let mut stmt = tx.prepare(
             "INSERT OR IGNORE INTO words
                (group_id, text, note, status, wrong_count, correct_streak, created_at)
@@ -205,7 +251,7 @@ mod tests {
     fn export_then_import_roundtrip() {
         let dir = temp_dir("backup");
         let source = db::open_memory();
-        let g = groups::create(&source, "1", "第一单元").unwrap();
+        let g = groups::create(&source, None, "1", "第一单元").unwrap();
         words::add(&source, g.id, "春天", Some("造句用")).unwrap();
         words::add(&source, g.id, "夏天", None).unwrap();
         crate::repo::word_progress::mark_wrong(&source, words::list(&source, g.id).unwrap()[0].id)
@@ -223,15 +269,36 @@ mod tests {
 
         let gs = groups::list(&target).unwrap();
         assert_eq!(gs.len(), 1);
-        assert_eq!(gs[0].word_count, 2);
-        // 进度随备份一起恢复
-        assert_eq!(gs[0].learning_count, 1);
+        assert_eq!(gs[0].total_word_count, 2);
+        assert_eq!(gs[0].total_learning_count, 1);
 
-        // 重复导入不重复写入
         let again = import(&target, &path).unwrap();
+        assert_eq!(again.groups_added, 0);
         assert_eq!(again.groups_merged, 1);
         assert_eq!(again.words_added, 0);
         assert_eq!(again.words_skipped, 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nested_groups_roundtrip() {
+        let dir = temp_dir("backup-tree");
+        let source = db::open_memory();
+        let book = groups::create(&source, None, "1", "二年级上册").unwrap();
+        let unit = groups::create(&source, Some(book.id), "1", "第一单元").unwrap();
+        words::add(&source, unit.id, "春天", None).unwrap();
+
+        let path = create(&source, &dir).unwrap();
+        let target = db::open_memory();
+        let summary = import(&target, &path).unwrap();
+        assert_eq!(summary.groups_added, 2);
+
+        let gs = groups::list(&target).unwrap();
+        assert_eq!(gs.len(), 2);
+        assert_eq!(gs[1].path, "二年级上册 / 第一单元");
+        assert_eq!(gs[0].total_word_count, 1);
+        assert_eq!(gs[1].word_count, 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -42,7 +42,12 @@ export default function Quiz({ sessionId, onFinish, onExit }: QuizProps) {
   const items = session?.items ?? [];
   const current = items[index];
 
-  // 显示词语后按设置的秒数自动重新遮罩
+  // 翻到新词先自动显示，家长可以直接读；设置了时长就到点自动遮住
+  useEffect(() => {
+    if (session) setRevealed(true);
+  }, [index, session]);
+
+  // 每个词显示后按设置的秒数自动遮罩；手动点「显示」也会重新计时
   useEffect(() => {
     if (!revealed || !settings || settings.maskSeconds <= 0) return;
     const timer = setTimeout(() => setRevealed(false), settings.maskSeconds * 1000);
@@ -159,8 +164,8 @@ export default function Quiz({ sessionId, onFinish, onExit }: QuizProps) {
         </button>
         <p className="mt-4 text-xs text-stone-400">
           {revealed && settings && settings.maskSeconds > 0
-            ? settings.maskSeconds + " 秒后自动隐藏"
-            : "空格=显示/下一个 · Enter=不会 · ←=上一个 · Esc=退出"}
+            ? settings.maskSeconds + " 秒后自动遮住 · 空格=下一个 · Enter=不会"
+            : "已遮住 · 点击词语或空格重新显示 · Enter=不会 · ←=上一个"}
         </p>
       </div>
 

@@ -21,10 +21,13 @@ export default function Wordbook({ onPrint }: WordbookProps) {
   const [groups, setGroups] = useState<Group[]>([]);
   const [words, setWords] = useState<Word[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<Notice | null>(null);
 
-  const [groupModal, setGroupModal] = useState<{ mode: "create" } | { mode: "edit"; group: Group } | null>(null);
+  const [groupModal, setGroupModal] = useState<
+    { mode: "create"; parent: Group | null } | { mode: "edit"; group: Group } | null
+  >(null);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [edit, setEdit] = useState<{ id: number; text: string; note: string } | null>(null);
@@ -50,8 +53,7 @@ export default function Wordbook({ onPrint }: WordbookProps) {
   }, []);
 
   const reloadWords = useCallback(async (groupId: number) => {
-    const list = await api.listWords(groupId);
-    setWords(list);
+    setWords(await api.listWords(groupId));
   }, []);
 
   useEffect(() => {
@@ -80,16 +82,51 @@ export default function Wordbook({ onPrint }: WordbookProps) {
     };
   }, [selectedId, reloadWords]);
 
-  const current = useMemo(
-    () => groups.find((g) => g.id === selectedId) ?? null,
-    [groups, selectedId],
-  );
+  const current = useMemo(() => groups.find((g) => g.id === selectedId) ?? null, [groups, selectedId]);
+
+  // 折叠的父分组下面的节点不显示
+  const visibleGroups = useMemo(() => {
+    const byId = new Map(groups.map((g) => [g.id, g]));
+    return groups.filter((g) => {
+      let parent = g.parentId;
+      while (parent != null) {
+        if (collapsed.has(parent)) return false;
+        parent = byId.get(parent)?.parentId ?? null;
+      }
+      return true;
+    });
+  }, [groups, collapsed]);
+
+  const childrenOf = (id: number) => groups.filter((g) => g.parentId === id);
+
+  const descendants = (id: number) => {
+    let groupCount = 0;
+    let wordCount = 0;
+    const walk = (pid: number) => {
+      for (const child of childrenOf(pid)) {
+        groupCount += 1;
+        wordCount += child.wordCount;
+        walk(child.id);
+      }
+    };
+    walk(id);
+    return { groupCount, wordCount };
+  };
 
   const stats = useMemo(() => {
     const learning = words.filter((w) => w.status === "learning").length;
     const newCount = words.filter((w) => w.status === "new").length;
     return { total: words.length, learning, newCount };
   }, [words]);
+
+  const toggleCollapse = (id: number) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const saveGroup = async (code: string, name: string) => {
     try {
@@ -98,7 +135,15 @@ export default function Wordbook({ onPrint }: WordbookProps) {
         notify("ok", "分组已更新");
         await refreshGroups(groupModal.group.id);
       } else {
-        const created = await api.createGroup(code, name);
+        const parentId = groupModal?.mode === "create" ? groupModal.parent?.id ?? null : null;
+        const created = await api.createGroup(parentId, code, name);
+        if (parentId != null) {
+          setCollapsed((prev) => {
+            const next = new Set(prev);
+            next.delete(parentId);
+            return next;
+          });
+        }
         notify("ok", "已创建分组「" + created.name + "」");
         await refreshGroups(created.id);
       }
@@ -109,11 +154,14 @@ export default function Wordbook({ onPrint }: WordbookProps) {
   };
 
   const removeGroup = (group: Group) => {
+    const { groupCount, wordCount } = descendants(group.id);
     setConfirm({
       title: "删除分组",
       body:
-        "将删除「" + group.code + " " + group.name + "」及其 " + group.wordCount +
-        " 个词条" + (group.learningCount > 0 ? "（其中 " + group.learningCount + " 个在错题本中）" : "") +
+        "将删除「" + group.path + "」" +
+        (groupCount > 0 ? "及其 " + groupCount + " 个子分组" : "") +
+        "，共 " + (wordCount + group.wordCount) + " 个词条" +
+        (group.totalLearningCount > 0 ? "（其中 " + group.totalLearningCount + " 个在错题本中）" : "") +
         "，该操作不可撤销。",
       run: async () => {
         try {
@@ -146,7 +194,10 @@ export default function Wordbook({ onPrint }: WordbookProps) {
       await api.updateWord(edit.id, edit.text, edit.note || null);
       setEdit(null);
       notify("ok", "已保存");
-      if (selectedId != null) await reloadWords(selectedId);
+      if (selectedId != null) {
+        await reloadWords(selectedId);
+        await refreshGroups(selectedId);
+      }
     } catch (e) {
       notify("error", errorMessage(e));
     }
@@ -197,10 +248,12 @@ export default function Wordbook({ onPrint }: WordbookProps) {
     return <div className="flex flex-1 items-center justify-center text-sm text-stone-400">加载中…</div>;
   }
 
+  const childCount = current ? childrenOf(current.id).length : 0;
+
   return (
     <div className="flex min-h-0 flex-1">
-      {/* 分组列表 */}
-      <aside className="flex w-64 shrink-0 flex-col border-r border-stone-200 bg-white">
+      {/* 分组树 */}
+      <aside className="flex w-72 shrink-0 flex-col border-r border-stone-200 bg-white">
         <div className="flex items-baseline justify-between px-4 pt-4 pb-2">
           <h1 className="text-sm font-semibold text-stone-800">词语表</h1>
           <span className="text-xs text-stone-400">{groups.length} 组</span>
@@ -210,47 +263,75 @@ export default function Wordbook({ onPrint }: WordbookProps) {
             <p className="px-2 py-6 text-center text-xs leading-relaxed text-stone-400">
               还没有分组
               <br />
-              先建一个「第 1 单元」
+              先建一个「二年级上册」
             </p>
           )}
-          {groups.map((g) => {
+          {visibleGroups.map((g) => {
             const active = g.id === selectedId;
+            const children = groups.filter((x) => x.parentId === g.id).length;
             return (
-              <button
-                key={g.id}
-                onClick={() => setSelectedId(g.id)}
-                className={
-                  "mb-0.5 flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition " +
-                  (active ? "bg-amber-50 ring-1 ring-amber-200" : "hover:bg-stone-50")
-                }
-              >
-                <span
+              <div key={g.id} style={{ paddingLeft: g.depth * 14 }}>
+                <div
+                  onClick={() => setSelectedId(g.id)}
                   className={
-                    "flex h-6 w-6 shrink-0 items-center justify-center rounded text-xs font-medium " +
-                    (active ? "bg-amber-600 text-white" : "bg-stone-100 text-stone-500")
+                    "mb-0.5 flex cursor-pointer items-start gap-1 rounded-md py-1.5 pr-2 " +
+                    (active ? "bg-amber-50 ring-1 ring-amber-200" : "hover:bg-stone-50")
                   }
                 >
-                  {g.code}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm text-stone-700">{g.name}</span>
-                  <span className="block text-xs text-stone-400">
-                    {g.wordCount} 词
-                    {g.learningCount > 0 && <span className="text-rose-500"> · {g.learningCount} 错题</span>}
+                  {children > 0 ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleCollapse(g.id);
+                      }}
+                      className="mt-1 w-4 shrink-0 text-center text-[10px] text-stone-400 hover:text-stone-700"
+                    >
+                      {collapsed.has(g.id) ? "▸" : "▾"}
+                    </button>
+                  ) : (
+                    <span className="w-4 shrink-0" />
+                  )}
+                  <span
+                    className={
+                      "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-medium " +
+                      (active ? "bg-amber-600 text-white" : "bg-stone-100 text-stone-500")
+                    }
+                  >
+                    {g.code}
                   </span>
-                  <span className="block text-[11px] text-stone-400">{practiceLabel(g.lastPracticedAt)}</span>
-                </span>
-              </button>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-stone-700">{g.name}</span>
+                    <span className="block text-[11px] text-stone-400">
+                      {g.totalWordCount} 词
+                      {g.totalLearningCount > 0 && (
+                        <span className="text-rose-500"> · {g.totalLearningCount} 错题</span>
+                      )}
+                      {children > 0 && <span className="text-stone-400"> · {children} 子组</span>}
+                    </span>
+                    <span className="block text-[11px] text-stone-400">
+                      {practiceLabel(g.lastPracticedAt)}
+                    </span>
+                  </span>
+                </div>
+              </div>
             );
           })}
         </div>
-        <div className="border-t border-stone-100 p-2">
+        <div className="space-y-1 border-t border-stone-100 p-2">
           <button
-            onClick={() => setGroupModal({ mode: "create" })}
+            onClick={() => setGroupModal({ mode: "create", parent: null })}
             className="w-full rounded-md border border-dashed border-stone-300 py-2 text-sm text-stone-500 hover:border-stone-400 hover:text-stone-700"
           >
             + 新建分组
           </button>
+          {current && (
+            <button
+              onClick={() => setGroupModal({ mode: "create", parent: current })}
+              className="w-full rounded-md py-1.5 text-xs text-stone-500 hover:bg-stone-50 hover:text-stone-700"
+            >
+              + 在「{current.name}」下新建子分组
+            </button>
+          )}
         </div>
       </aside>
 
@@ -260,7 +341,7 @@ export default function Wordbook({ onPrint }: WordbookProps) {
           <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
             <p className="text-sm text-stone-500">先创建一个分组，再把课本词表粘进来</p>
             <button
-              onClick={() => setGroupModal({ mode: "create" })}
+              onClick={() => setGroupModal({ mode: "create", parent: null })}
               className="rounded-md bg-stone-800 px-4 py-2 text-sm font-medium text-white hover:bg-stone-900"
             >
               新建分组
@@ -270,13 +351,23 @@ export default function Wordbook({ onPrint }: WordbookProps) {
           <>
             <header className="flex items-start justify-between gap-4 border-b border-stone-200 px-6 py-4">
               <div className="min-w-0">
+                {current.depth > 0 && (
+                  <p className="mb-0.5 truncate text-xs text-stone-400">
+                    {current.pathSegments.slice(0, -1).join(" / ")}
+                  </p>
+                )}
                 <h2 className="truncate text-lg font-semibold text-stone-800">
                   <span className="mr-2 text-stone-400">{current.code}</span>
                   {current.name}
                 </h2>
                 <p className="mt-1 text-xs text-stone-500">
-                  共 {stats.total} 词 · 未练 {stats.newCount} · 错题 {stats.learning} · 已会{" "}
+                  本组 {stats.total} 词 · 未练 {stats.newCount} · 错题 {stats.learning} · 已会{" "}
                   {stats.total - stats.newCount - stats.learning}
+                  {childCount > 0 && (
+                    <span className="text-stone-400">
+                      　|　含 {childCount} 个子分组共 {current.totalWordCount} 词
+                    </span>
+                  )}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -287,7 +378,7 @@ export default function Wordbook({ onPrint }: WordbookProps) {
                   批量粘贴导入
                 </button>
                 <button
-                  onClick={() => onPrint(current.id, current.code + " " + current.name)}
+                  onClick={() => onPrint(current.id, current.path)}
                   className="rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50"
                 >
                   打印
@@ -314,7 +405,7 @@ export default function Wordbook({ onPrint }: WordbookProps) {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") void addWord();
                 }}
-                placeholder="输入词语，回车添加"
+                placeholder="输入词语，回车添加到本组"
                 className="w-64 rounded-md border border-stone-200 px-3 py-1.5 text-sm outline-none focus:border-stone-400"
               />
               <button
@@ -329,8 +420,14 @@ export default function Wordbook({ onPrint }: WordbookProps) {
             <div className="min-h-0 flex-1 overflow-y-auto">
               {words.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-                  <p className="text-sm text-stone-500">这个分组还没有词条</p>
-                  <p className="text-xs text-stone-400">可以整段粘贴课本词表，也可以逐条输入</p>
+                  <p className="text-sm text-stone-500">
+                    {childCount > 0 ? "这个分组本身没有词条" : "这个分组还没有词条"}
+                  </p>
+                  <p className="text-xs text-stone-400">
+                    {childCount > 0
+                      ? "词条都在下面的子分组里，抽题和打印会自动包含"
+                      : "可以整段粘贴课本词表，也可以逐条输入"}
+                  </p>
                 </div>
               ) : (
                 <table className="w-full border-collapse text-sm">
@@ -376,7 +473,9 @@ export default function Wordbook({ onPrint }: WordbookProps) {
                               />
                             </td>
                             <td className="py-2" colSpan={2}>
-                              <span className={"rounded px-1.5 py-0.5 text-xs " + style.cls}>{style.label}</span>
+                              <span className={"rounded px-1.5 py-0.5 text-xs " + style.cls}>
+                                {style.label}
+                              </span>
                             </td>
                             <td className="py-1.5 pr-6 text-right">
                               <button
@@ -403,9 +502,13 @@ export default function Wordbook({ onPrint }: WordbookProps) {
                             <span className="line-clamp-1">{word.note ?? ""}</span>
                           </td>
                           <td className="py-2.5">
-                            <span className={"rounded px-1.5 py-0.5 text-xs " + style.cls}>{style.label}</span>
+                            <span className={"rounded px-1.5 py-0.5 text-xs " + style.cls}>
+                              {style.label}
+                            </span>
                           </td>
-                          <td className="py-2.5 text-xs text-stone-500">{word.wrongCount > 0 ? word.wrongCount : "—"}</td>
+                          <td className="py-2.5 text-xs text-stone-500">
+                            {word.wrongCount > 0 ? word.wrongCount : "—"}
+                          </td>
                           <td className="py-2.5 pr-6 text-right">
                             <span className="opacity-0 transition group-hover:opacity-100">
                               <button
@@ -443,7 +546,12 @@ export default function Wordbook({ onPrint }: WordbookProps) {
       {groupModal && (
         <GroupModal
           group={groupModal.mode === "edit" ? groupModal.group : null}
-          nextCode={String(groups.length + 1)}
+          parent={groupModal.mode === "create" ? groupModal.parent : null}
+          nextCode={String(
+            (groupModal.mode === "create" && groupModal.parent
+              ? groups.filter((g) => g.parentId === groupModal.parent!.id).length
+              : groups.filter((g) => g.parentId === null).length) + 1,
+          )}
           onSubmit={saveGroup}
           onClose={() => setGroupModal(null)}
         />
@@ -452,7 +560,7 @@ export default function Wordbook({ onPrint }: WordbookProps) {
       {pasteOpen && current && (
         <PasteImportModal
           groupId={current.id}
-          groupName={current.name}
+          groupName={current.path}
           onClose={() => setPasteOpen(false)}
           onImported={handleImported}
         />

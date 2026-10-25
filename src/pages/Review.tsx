@@ -9,9 +9,22 @@ interface ReviewProps {
   onBack: () => void;
 }
 
+function WordChars({ text, marks }: { text: string; marks: Set<number> }) {
+  return (
+    <>
+      {[...text].map((ch, i) => (
+        <span key={i} className={marks.has(i) ? "rounded bg-rose-200/70 px-0.5 text-rose-800" : ""}>
+          {ch}
+        </span>
+      ))}
+    </>
+  );
+}
+
 export default function Review({ sessionId, onDone, onBack }: ReviewProps) {
   const [session, setSession] = useState<Session | null>(null);
-  const [wrong, setWrong] = useState<Set<number>>(new Set());
+  // itemId -> 不会写的字下标；空集合表示整词算错
+  const [wrong, setWrong] = useState<Map<number, Set<number>>>(new Map());
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const { notice, notify } = useNotice();
@@ -22,7 +35,11 @@ export default function Review({ sessionId, onDone, onBack }: ReviewProps) {
         const detail = await api.getSession(sessionId);
         setSession(detail);
         // 默写中点了「不会」的词，默认标为错
-        setWrong(new Set(detail.items.filter((i) => i.skipMarked).map((i) => i.id)));
+        const init = new Map<number, Set<number>>();
+        for (const item of detail.items) {
+          if (item.skipMarked) init.set(item.id, new Set<number>());
+        }
+        setWrong(init);
       } catch (e) {
         notify("error", errorMessage(e));
       }
@@ -30,11 +47,22 @@ export default function Review({ sessionId, onDone, onBack }: ReviewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  const toggle = (id: number) => {
+  const toggleWord = (id: number) => {
     setWrong((prev) => {
-      const next = new Set(prev);
+      const next = new Map(prev);
       if (next.has(id)) next.delete(id);
-      else next.add(id);
+      else next.set(id, new Set<number>());
+      return next;
+    });
+  };
+
+  const toggleChar = (itemId: number, index: number) => {
+    setWrong((prev) => {
+      const next = new Map(prev);
+      const chars = new Set(next.get(itemId) ?? []);
+      if (chars.has(index)) chars.delete(index);
+      else chars.add(index);
+      next.set(itemId, chars);
       return next;
     });
   };
@@ -43,7 +71,11 @@ export default function Review({ sessionId, onDone, onBack }: ReviewProps) {
     if (!session || busy) return;
     setBusy(true);
     try {
-      const r = await api.submitReview(session.id, [...wrong]);
+      const payload = [...wrong.entries()].map(([itemId, chars]) => ({
+        itemId,
+        chars: [...chars].sort((a, b) => a - b),
+      }));
+      const r = await api.submitReview(session.id, payload);
       if (r.wrong === 0) {
         notify("ok", "全对！" + (r.graduated > 0 ? r.graduated + " 个词已移出错题本" : ""));
       } else {
@@ -76,36 +108,66 @@ export default function Review({ sessionId, onDone, onBack }: ReviewProps) {
         </h1>
         <p className="mt-1 text-sm text-stone-500">
           {session.groupLabel} · 共 {total} 词
-          {!done && " · 默认全部正确，点击词语标为「错」"}
+          {!done && " · 点词语标错，再点具体字可标记哪个字不会写"}
         </p>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
           {session.items.map((item) => {
+            const stored = new Set(item.wrongChars);
+            const marks = done ? stored : wrong.get(item.id) ?? new Set<number>();
             const isWrong = done ? item.result === "wrong" : wrong.has(item.id);
             return (
-              <button
+              <div
                 key={item.id}
-                disabled={done}
-                onClick={() => toggle(item.id)}
                 className={
-                  "flex items-center gap-2 rounded-lg border px-3 py-3 text-left transition " +
-                  (isWrong
-                    ? "border-rose-300 bg-rose-50"
-                    : "border-stone-200 bg-white hover:border-stone-300")
+                  "rounded-lg border px-3 py-2.5 transition " +
+                  (isWrong ? "border-rose-300 bg-rose-50" : "border-stone-200 bg-white")
                 }
               >
-                <span className="w-6 shrink-0 text-xs tabular-nums text-stone-400">{item.seq}</span>
-                <span
-                  className={
-                    "min-w-0 flex-1 truncate text-[15px] " + (isWrong ? "text-rose-700" : "text-stone-800")
-                  }
+                <button
+                  disabled={done}
+                  onClick={() => toggleWord(item.id)}
+                  className="flex w-full items-center gap-2 text-left disabled:cursor-default"
                 >
-                  {item.text}
-                </span>
-                {isWrong && <span className="shrink-0 text-xs font-medium text-rose-500">错</span>}
-              </button>
+                  <span className="w-6 shrink-0 text-xs tabular-nums text-stone-400">{item.seq}</span>
+                  <span
+                    className={
+                      "min-w-0 flex-1 truncate text-[15px] " +
+                      (isWrong ? "text-rose-700" : "text-stone-800")
+                    }
+                  >
+                    <WordChars text={item.text} marks={marks} />
+                  </span>
+                  {isWrong && <span className="shrink-0 text-xs font-medium text-rose-500">错</span>}
+                </button>
+
+                {isWrong && !done && (
+                  <div className="mt-2 flex items-center gap-1 pl-8">
+                    {[...item.text].map((ch, i) => (
+                      <button
+                        key={i}
+                        onClick={() => toggleChar(item.id, i)}
+                        title="标为不会写的字"
+                        className={
+                          "h-6 w-6 rounded border text-xs transition " +
+                          (marks.has(i)
+                            ? "border-rose-400 bg-rose-200 text-rose-800"
+                            : "border-stone-200 bg-white text-stone-400 hover:border-stone-300")
+                        }
+                      >
+                        {ch}
+                      </button>
+                    ))}
+                    <span className="ml-1 text-[10px] leading-tight text-stone-400">
+                      点字标错字，
+                      <br />
+                      不点=整词错
+                    </span>
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>

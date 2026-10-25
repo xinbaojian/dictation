@@ -4,12 +4,13 @@ import Modal from "./Modal";
 
 interface GroupModalProps {
   group: Group | null;
+  parent: Group | null;
   nextCode: string;
   onSubmit: (code: string, name: string) => Promise<void>;
   onClose: () => void;
 }
 
-export default function GroupModal({ group, nextCode, onSubmit, onClose }: GroupModalProps) {
+export default function GroupModal({ group, parent, nextCode, onSubmit, onClose }: GroupModalProps) {
   const [code, setCode] = useState(group ? group.code : nextCode);
   const [name, setName] = useState(group ? group.name : "");
   const [busy, setBusy] = useState(false);
@@ -26,8 +27,12 @@ export default function GroupModal({ group, nextCode, onSubmit, onClose }: Group
 
   return (
     <Modal
-      title={group ? "编辑分组" : "新建分组"}
-      subtitle={group ? "" : "编号可留空，系统自动按顺序编号"}
+      title={group ? "编辑分组" : parent ? "新建子分组" : "新建分组"}
+      subtitle={
+        parent
+          ? "将创建在「" + parent.path + "」下面"
+          : "编号可留空，系统自动按顺序编号"
+      }
       onClose={onClose}
       footer={
         <>
@@ -65,7 +70,7 @@ export default function GroupModal({ group, nextCode, onSubmit, onClose }: Group
             onKeyDown={(e) => {
               if (e.key === "Enter") void submit();
             }}
-            placeholder="如：第 3 单元 生字词"
+            placeholder={parent ? "如：第一单元" : "如：二年级上册"}
             className="w-full rounded-md border border-stone-200 px-3 py-2 text-sm outline-none focus:border-stone-400"
           />
         </label>

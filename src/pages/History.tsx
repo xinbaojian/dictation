@@ -170,7 +170,20 @@ export default function History({ onStart, onReview }: HistoryProps) {
                   }
                 >
                   <span className="w-6 text-xs tabular-nums text-stone-400">{item.seq}</span>
-                  <span className="flex-1 text-sm text-stone-800">{item.text}</span>
+                  <span className="flex-1 text-sm text-stone-800">
+                    {[...item.text].map((ch, i) => (
+                      <span
+                        key={i}
+                        className={
+                          item.wrongChars.includes(i)
+                            ? "rounded bg-rose-200/70 px-0.5 text-rose-800"
+                            : ""
+                        }
+                      >
+                        {ch}
+                      </span>
+                    ))}
+                  </span>
                   <span
                     className={
                       "text-xs " + (wrong ? "font-medium text-rose-500" : "text-emerald-600")

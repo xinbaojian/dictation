@@ -9,7 +9,7 @@ const MASK_OPTIONS = [
   { value: 3, label: "3 秒" },
   { value: 5, label: "5 秒" },
   { value: 8, label: "8 秒" },
-  { value: 0, label: "不自动隐藏" },
+  { value: 0, label: "一直显示" },
 ];
 
 const STREAK_OPTIONS = [1, 2, 3];
@@ -98,7 +98,9 @@ export default function Settings() {
 
           <div className="mt-4 space-y-4">
             <div>
-              <p className="mb-1.5 text-xs text-stone-500">词语显示后自动隐藏</p>
+              <p className="mb-1.5 text-xs text-stone-500">
+                每题自动显示多久后遮住（翻到新词先显示，到点自动盖住）
+              </p>
               <div className="flex flex-wrap gap-2">
                 {MASK_OPTIONS.map((o) => (
                   <button

@@ -6,10 +6,10 @@
 
 ## 功能
 
-- **词表**：分组（单元/课）管理，单条录入，整段粘贴导入（自动切分、去重、剥离「1.」序号）
-- **默写**：多分组 + 范围（全部 / 仅未掌握 / 错题本）+ 题量，随机抽词且一场内不重复；屏幕默认遮住词语，点击显示、按设置秒数自动隐藏
+- **词表**：多级分组（二年级上册 → 第一单元 → …，任意层级），单条录入，整段粘贴导入（自动切分、去重、剥离「1.」序号）
+- **默写**：多分组 + 范围（全部 / 仅未掌握 / 错题本）+ 题量，随机抽词且一场内不重复；翻到新词先显示、按设置秒数自动遮住（可随时点开重看）
 - **断点**：中途退出不丢进度，下次可继续；默写结束未批改也能下次接着批
-- **批改**：网格点选错词，一键全对；错词自动进错题本
+- **批改**：网格点选错词，还能细化到「哪个字不会写」；错词自动进错题本（仍按整词）
 - **错题本**：连续答对 N 次自动出本（默认 2），也可手动判定已掌握、按分组筛选、专项默写
 - **记录**：历史会话 + 抽取顺序 + 只练本次错词
 - **设置**：遮罩时长、出本连对数、词语字号、数据目录、手动备份导出/导入
@@ -39,11 +39,19 @@ npm run typecheck          # 前端类型检查
 cd src-tauri && cargo test # 后端单测：切分 / 抽题 / 状态机 / 会话流转
 ```
 
-## 打包
+## 打包与部署
 
 ```bash
-npm run tauri build        # 产物：src-tauri/target/release/bundle/nsis/*.exe
+make                       # 打包 + 部署到 D:/StudyApp/dictation
+make build                 # 只打包，产物在 src-tauri/target/release/bundle/nsis/
+make test                  # cargo test + tsc --noEmit
+make dev                   # 开发模式
+make clean                 # 清理 target 与 dist
+
+make install INSTALL_DIR=E:/Apps/dictation   # 换部署目录
 ```
+
+部署目标默认是 `D:/StudyApp/dictation`，会覆盖其中的 `dictation.exe`；应用正在运行时会拒绝覆盖并提示先关窗口。
 
 ## 目录
 
@@ -63,7 +71,11 @@ src/
 
 ## 数据位置
 
-`%APPDATA%\com.dictation.app\dictation.db`（WAL 模式），备份在 `backups/backup-*.json`。
+绿色便携：数据库就在 `dictation.exe` 同级目录的 `dictation.db`（WAL 模式），备份在同目录 `backups/`。整个文件夹拷走即可换电脑。
+
+程序目录不可写时（例如装在 `Program Files`）自动回落到 `%APPDATA%\com.dictation.app\`，实际路径可在「设置 → 数据与备份」查看。
+
+**想清空数据**：关闭应用后删除 `dictation.db`（以及 `-wal`、`-shm`），下次打开就是全新的空库——不会从旧位置恢复。
 
 ## 关键设计
 

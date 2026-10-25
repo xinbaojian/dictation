@@ -96,7 +96,7 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
             <option value="">全部分组</option>
             {groups.map((g) => (
               <option key={g.id} value={g.id}>
-                {g.code} {g.name}
+                {g.path}
               </option>
             ))}
           </select>
@@ -113,7 +113,7 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
                 filter,
                 filter == null
                   ? "错词复习单"
-                  : (groups.find((g) => g.id === filter)?.name ?? "") + " · 错词复习单",
+                  : (groups.find((g) => g.id === filter)?.path ?? "") + " · 错词复习单",
               )
             }
             disabled={mistakes.length === 0}
@@ -153,7 +153,7 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
                 <tr key={word.id} className="group border-t border-stone-100 hover:bg-stone-50/70">
                   <td className="py-2.5 pl-8 text-[15px] text-stone-800">{word.text}</td>
                   <td className="py-2.5 text-xs text-stone-500">
-                    {word.groupCode} {word.groupName}
+                    {word.groupName}
                   </td>
                   <td className="py-2.5 text-xs text-rose-600">{word.wrongCount} 次</td>
                   <td className="py-2.5">

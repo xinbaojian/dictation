@@ -4,7 +4,7 @@ use crate::repo::{settings, word_progress};
 use rand::seq::SliceRandom;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +28,8 @@ pub struct SessionItemDto {
     pub text: String,
     pub skip_marked: bool,
     pub result: String,
+    /// 批改时标出的「不会写的字」下标（0-based），空数组表示整词算错
+    pub wrong_chars: Vec<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -69,14 +71,38 @@ pub struct ReviewResult {
     pub graduated: i64,
 }
 
+/// 批改时提交的一项：item_id + 不会写的字下标（空 = 整词算错）
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WrongMark {
+    pub item_id: i64,
+    #[serde(default)]
+    pub chars: Vec<i64>,
+}
+
+fn parse_chars(raw: &str) -> Vec<i64> {
+    raw.split(',')
+        .filter_map(|s| s.trim().parse::<i64>().ok())
+        .collect()
+}
+
+fn format_chars(chars: &[i64]) -> String {
+    let mut sorted: Vec<i64> = chars.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    sorted.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(",")
+}
+
 pub fn group_label(config: &SessionConfig) -> String {
     if config.scope == Scope::Mistake.as_str() {
         return "错题本".to_string();
     }
-    if config.group_names.is_empty() {
-        return "全部词语".to_string();
+    match config.group_names.len() {
+        0 => "全部词语".to_string(),
+        1 => config.group_names[0].clone(),
+        2 => config.group_names.join("、"),
+        n => format!("{} 等 {} 组", config.group_names[0], n),
     }
-    config.group_names.join("、")
 }
 
 fn parse_config(raw: &str) -> SessionConfig {
@@ -127,17 +153,16 @@ fn scope_empty_hint(scope: Scope) -> &'static str {
     }
 }
 
+/// 记录完整路径（"二年级上册 / 第一单元"），历史里看得懂是哪一册哪一单元
 fn load_group_names(conn: &Connection, group_ids: &[i64]) -> AppResult<Vec<String>> {
     if group_ids.is_empty() {
         return Ok(vec![]);
     }
+    let all = super::groups::list(conn)?;
     let mut out = Vec::new();
     for id in group_ids {
-        let name: Option<String> = conn
-            .query_row("SELECT name FROM groups WHERE id = ?1", params![id], |r| r.get(0))
-            .ok();
-        if let Some(name) = name {
-            out.push(name);
+        if let Some(group) = all.iter().find(|g| g.id == *id) {
+            out.push(group.path.clone());
         }
     }
     Ok(out)
@@ -190,7 +215,7 @@ pub fn get(conn: &Connection, id: i64) -> AppResult<SessionDto> {
 
     let config = parse_config(&config_json);
     let mut stmt = conn.prepare(
-        "SELECT i.id, i.seq, i.word_id, w.text, i.skip_marked, i.result
+        "SELECT i.id, i.seq, i.word_id, w.text, i.skip_marked, i.result, i.wrong_chars
          FROM session_items i
          JOIN words w ON w.id = i.word_id
          WHERE i.session_id = ?1
@@ -205,6 +230,7 @@ pub fn get(conn: &Connection, id: i64) -> AppResult<SessionDto> {
                 text: r.get(3)?,
                 skip_marked: r.get::<_, i64>(4)? == 1,
                 result: r.get(5)?,
+                wrong_chars: parse_chars(&r.get::<_, String>(6)?),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -279,28 +305,42 @@ pub fn abandon(conn: &Connection, session_id: i64) -> AppResult<()> {
 }
 
 /// 批改提交：写入每题对错、推进词条状态、关闭会话
-pub fn submit_review(conn: &Connection, session_id: i64, wrong_item_ids: &[i64]) -> AppResult<ReviewResult> {
+pub fn submit_review(
+    conn: &Connection,
+    session_id: i64,
+    wrong_items: &[WrongMark],
+) -> AppResult<ReviewResult> {
     let session = get(conn, session_id)?;
     if session.status != "reviewing" {
         return Err(AppError::msg("这次默写不在批改状态"));
     }
-    let wrong_set: HashSet<i64> = wrong_item_ids.iter().copied().collect();
+    // item_id -> 不会写的字下标（空串 = 整词算错）
+    let mut wrong_map: HashMap<i64, String> = HashMap::new();
+    for mark in wrong_items {
+        wrong_map.insert(mark.item_id, format_chars(&mark.chars));
+    }
     let streak = settings::load(conn)?.streak_to_master;
     let mut graduated = 0;
     let tx = conn.unchecked_transaction()?;
     {
-        let mut stmt = tx.prepare("UPDATE session_items SET result = ?1 WHERE id = ?2")?;
+        let mut stmt = tx.prepare("UPDATE session_items SET result = ?1, wrong_chars = ?2 WHERE id = ?3")?;
         for item in &session.items {
-            let wrong = wrong_set.contains(&item.id);
-            stmt.execute(params![if wrong { "wrong" } else { "correct" }, item.id])?;
-            if wrong {
-                word_progress::mark_wrong(&tx, item.word_id)?;
-            } else if word_progress::mark_correct(&tx, item.word_id, streak)? {
-                graduated += 1;
+            match wrong_map.get(&item.id) {
+                Some(chars) => {
+                    stmt.execute(params!["wrong", chars, item.id])?;
+                    word_progress::mark_wrong(&tx, item.word_id)?;
+                }
+                None => {
+                    stmt.execute(params!["correct", "", item.id])?;
+                    if word_progress::mark_correct(&tx, item.word_id, streak)? {
+                        graduated += 1;
+                    }
+                }
             }
         }
     }
-    let wrong_total = wrong_set.len() as i64;
+    // 只统计本次会话里真实存在的条目，避免客户端多传 id 影响计数
+    let wrong_total = session.items.iter().filter(|i| wrong_map.contains_key(&i.id)).count() as i64;
     tx.execute(
         "UPDATE sessions SET status = 'finished', wrong_total = ?1,
                 finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
@@ -384,9 +424,13 @@ mod tests {
     use crate::domain::sampler::Scope;
     use crate::repo::{groups, words};
 
+    fn marks(ids: &[i64]) -> Vec<WrongMark> {
+        ids.iter().map(|id| WrongMark { item_id: *id, chars: vec![] }).collect()
+    }
+
     fn seed() -> (Connection, i64) {
         let conn = db::open_memory();
-        let g = groups::create(&conn, "1", "第一单元").unwrap();
+        let g = groups::create(&conn, None, "1", "第一单元").unwrap();
         for w in ["春天", "夏天", "秋天"] {
             words::add(&conn, g.id, w, None).unwrap();
         }
@@ -409,7 +453,7 @@ mod tests {
     #[test]
     fn create_rejects_empty_pool() {
         let conn = db::open_memory();
-        let g = groups::create(&conn, "1", "空分组").unwrap();
+        let g = groups::create(&conn, None, "1", "空分组").unwrap();
         let err = create(&conn, &[g.id], Scope::All, 0, false).unwrap_err();
         assert!(err.to_string().contains("还没有词条"));
     }
@@ -421,7 +465,7 @@ mod tests {
         let s = get(&conn, id).unwrap();
         finish_quiz(&conn, id).unwrap();
 
-        let r = submit_review(&conn, id, &[s.items[0].id]).unwrap();
+        let r = submit_review(&conn, id, &marks(&[s.items[0].id])).unwrap();
         assert_eq!(r.wrong, 1);
         assert_eq!(r.correct, 2);
 
@@ -434,6 +478,27 @@ mod tests {
         let mistakes = words::list_mistakes(&conn, None).unwrap();
         assert_eq!(mistakes.len(), 1);
         assert_eq!(mistakes[0].wrong_count, 1);
+    }
+
+    #[test]
+    fn wrong_chars_are_stored_per_item() {
+        let (conn, gid) = seed();
+        let id = create(&conn, &[gid], Scope::All, 0, false).unwrap();
+        let s = get(&conn, id).unwrap();
+        finish_quiz(&conn, id).unwrap();
+
+        let target = s.items[0].id;
+        submit_review(
+            &conn,
+            id,
+            &[WrongMark { item_id: target, chars: vec![1, 0, 1] }],
+        )
+        .unwrap();
+
+        let after = get(&conn, id).unwrap();
+        assert_eq!(after.items[0].wrong_chars, vec![0, 1], "下标应去重且升序");
+        assert!(after.items[1].wrong_chars.is_empty());
+        assert_eq!(after.wrong_total, 1);
     }
 
     #[test]
@@ -474,7 +539,7 @@ mod tests {
         let id = create(&conn, &[gid], Scope::All, 0, false).unwrap();
         let s = get(&conn, id).unwrap();
         finish_quiz(&conn, id).unwrap();
-        submit_review(&conn, id, &[s.items[0].id, s.items[1].id]).unwrap();
+        submit_review(&conn, id, &marks(&[s.items[0].id, s.items[1].id])).unwrap();
 
         let new_id = retry_wrong_words(&conn, id).unwrap();
         let retried = get(&conn, new_id).unwrap();

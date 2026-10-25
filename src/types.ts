@@ -4,12 +4,28 @@ export type SessionStatus = "running" | "reviewing" | "finished" | "abandoned";
 
 export interface Group {
   id: number;
+  parentId: number | null;
   code: string;
   name: string;
+  /** 层级，根为 0 */
+  depth: number;
+  /** 完整路径，如 "二年级上册 / 第一单元" */
+  path: string;
+  pathSegments: string[];
   sortOrder: number;
+  /** 本节点直属词条数 */
   wordCount: number;
+  /** 含所有子分组 */
+  totalWordCount: number;
   learningCount: number;
+  totalLearningCount: number;
+  hasChildren: boolean;
   lastPracticedAt: string | null;
+}
+
+export interface GroupDeleteResult {
+  groups: number;
+  words: number;
 }
 
 export interface Word {
@@ -41,6 +57,13 @@ export interface SessionItem {
   text: string;
   skipMarked: boolean;
   result: "pending" | "correct" | "wrong";
+  /** 批改时标出的「不会写的字」下标，空数组表示整词算错 */
+  wrongChars: number[];
+}
+
+export interface WrongMark {
+  itemId: number;
+  chars: number[];
 }
 
 export interface Session {

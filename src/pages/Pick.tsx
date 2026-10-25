@@ -64,10 +64,30 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
   }, [selected, scope]);
 
   const effectiveLimit = limit === 0 ? count : Math.min(limit, count);
-  const totalWords = useMemo(() => groups.reduce((sum, g) => sum + g.wordCount, 0), [groups]);
+  // 根分组的总词数之和，避免父子重复计算
+  const totalWords = useMemo(
+    () => groups.filter((g) => g.parentId === null).reduce((sum, g) => sum + g.totalWordCount, 0),
+    [groups],
+  );
+
+  const subtreeIds = (id: number): number[] => {
+    const out = [id];
+    for (let i = 0; i < out.length; i += 1) {
+      for (const g of groups) {
+        if (g.parentId === out[i] && !out.includes(g.id)) out.push(g.id);
+      }
+    }
+    return out;
+  };
 
   const toggleGroup = (id: number) => {
-    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    const ids = subtreeIds(id);
+    const allSelected = ids.every((x) => selected.includes(x));
+    setSelected((prev) =>
+      allSelected
+        ? prev.filter((x) => !ids.includes(x))
+        : Array.from(new Set([...prev, ...ids])),
+    );
   };
 
   const start = async () => {
@@ -154,43 +174,48 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
               {selected.length === groups.length ? "全部取消" : "全选"}
             </button>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div className="overflow-hidden rounded-lg border border-stone-200 bg-white">
             {groups.map((g) => {
               const on = selected.includes(g.id);
+              const partial = !on && subtreeIds(g.id).some((x) => selected.includes(x));
               return (
                 <button
                   key={g.id}
                   onClick={() => toggleGroup(g.id)}
+                  style={{ paddingLeft: 12 + g.depth * 18 }}
                   className={
-                    "flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition " +
-                    (on
-                      ? "border-amber-300 bg-amber-50"
-                      : "border-stone-200 bg-white hover:border-stone-300")
+                    "flex w-full items-center gap-2.5 border-b border-stone-100 px-3 py-2 text-left last:border-b-0 " +
+                    (on ? "bg-amber-50/70" : "hover:bg-stone-50")
                   }
                 >
                   <span
                     className={
-                      "flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[10px] " +
-                      (on ? "border-amber-600 bg-amber-600 text-white" : "border-stone-300 text-transparent")
+                      "flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[9px] " +
+                      (on
+                        ? "border-amber-600 bg-amber-600 text-white"
+                        : partial
+                          ? "border-amber-400 bg-amber-100 text-amber-600"
+                          : "border-stone-300 text-transparent")
                     }
                   >
-                    ✓
+                    {on ? "✓" : partial ? "–" : "✓"}
                   </span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm text-stone-700">
-                      {g.code} {g.name}
-                    </span>
-                    <span className="block text-xs text-stone-400">
-                      {g.wordCount} 词
-                      {g.learningCount > 0 ? " · " + g.learningCount + " 错题" : ""}
-                    </span>
+                  <span className="w-5 shrink-0 text-center text-[11px] text-stone-400">{g.code}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-stone-700">
+                    {g.depth === 0 ? g.name : "· " + g.name}
+                  </span>
+                  <span className="shrink-0 text-xs text-stone-400">
+                    {g.totalWordCount} 词
+                    {g.totalLearningCount > 0 && (
+                      <span className="text-rose-500"> · {g.totalLearningCount} 错题</span>
+                    )}
                   </span>
                 </button>
               );
             })}
           </div>
           <p className="mt-2 text-xs text-stone-400">
-            共 {totalWords} 个词条；同一词语在多个分组时只会抽到一次
+            共 {totalWords} 个词条；选父分组会连带选中下面的子分组，抽题时也会包含
           </p>
         </section>
 

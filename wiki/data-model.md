@@ -7,7 +7,15 @@ related: [quiz-flow.md, architecture.md]
 
 # 数据模型
 
-库文件：`%APPDATA%\com.dictation.app\dictation.db`（WAL）。结构定义在 `src-tauri/migrations/`。
+库文件：**程序同级目录**下的 `dictation.db`（WAL），即绿色便携——拷走整个文件夹就能换电脑。路径解析见 `src-tauri/src/db/mod.rs::resolve_dir`：
+
+1. 优先用 `current_exe()` 所在目录（探测可写性）
+2. 不可写（装在 Program Files）则回落到 `%APPDATA%\com.dictation.app\`
+3. 旧版本留在 `%APPDATA%` 的库只会在**第一次**便携启动时复制过来：成功后写标记文件 `.dictation-initialized`，之后即便用户删了库也不会再从旧位置搬回来
+
+删库重来：关闭应用后删掉 `dictation.db`（连同 `-wal` / `-shm`）。若只删主库文件，启动时会清掉孤立的 WAL，避免 SQLite 把旧页恢复出来。
+
+结构定义在 `src-tauri/migrations/`。
 
 ## 表
 
@@ -51,6 +59,7 @@ related: [quiz-flow.md, architecture.md]
 | `seq` | 1-based 抽取顺序，展示与复盘用 |
 | `skip_marked` | 默写时家长点了「不会」，批改页默认标错 |
 | `result` | `pending` / `correct` / `wrong` |
+| `wrong_chars` | 批改时标出的「不会写的字」下标（逗号分隔、已排序去重），空串 = 整词算错。**只用于复盘展示**，错题本与重默仍按整词 |
 
 双唯一索引：`UNIQUE(session_id, seq)`、`UNIQUE(session_id, word_id)`。
 
@@ -70,7 +79,7 @@ related: [quiz-flow.md, architecture.md]
 
 - `PRAGMA user_version` 记录版本，`src-tauri/src/db/mod.rs` 的 `MIGRATIONS` 数组按版本号执行
 - **发布过的脚本永不修改**，只能追加 `000N_xxx.sql` 并在数组末尾登记
-- 0002 是 `ALTER TABLE sessions ADD COLUMN current_seq`，已在既有库上实测升级成功
+- 0002 `sessions.current_seq`、0003 `session_items.wrong_chars` 都是 `ALTER TABLE ADD COLUMN`，已在既有库上实测升级成功
 
 ## 备份格式
 

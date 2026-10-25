@@ -30,7 +30,7 @@ export default function PrintSheet({ mode, groupId, title, onBack }: PrintSheetP
             setRows([]);
             return;
           }
-          const list = await api.listWords(groupId);
+          const list = await api.listWords(groupId, true);
           setRows(list.map((w) => ({ id: w.id, text: w.text })));
         }
       } catch (e) {

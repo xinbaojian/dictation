@@ -76,7 +76,7 @@ mod tests {
     use crate::db;
 
     fn word(conn: &Connection) -> i64 {
-        let g = crate::repo::groups::create(conn, "1", "第一单元").unwrap();
+        let g = crate::repo::groups::create(conn, None, "1", "第一单元").unwrap();
         crate::repo::words::add(conn, g.id, "春天", None).unwrap().id
     }
 

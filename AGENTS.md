@@ -14,10 +14,11 @@
 
 ```bash
 npm install
+make                       # 打包 + 部署到 D:/StudyApp/dictation
 npm run tauri dev          # 开发运行（Vite 1420 + Rust）
 npm run typecheck          # 前端类型检查（tsc --noEmit）
 npm run build              # 前端构建（typecheck + vite build）
-cd src-tauri && cargo test # 后端单测，当前 34 个
+cd src-tauri && cargo test # 后端单测，当前 43 个
 cd src-tauri && cargo build
 npm run tauri build        # 出 NSIS 安装包
 ```
@@ -27,7 +28,7 @@ npm run tauri build        # 出 NSIS 安装包
 ## 目录
 
 ```
-src-tauri/migrations/   0001 表结构、0002 会话进度（只增不改，user_version 递增）
+src-tauri/migrations/   0001 表结构、0002 会话进度、0003 错字标记、0004 分组树（只增不改，user_version 递增）
 src-tauri/src/db/       连接 + WAL + 迁移
 src-tauri/src/domain/   text.rs 粘贴切分、sampler.rs 抽题（纯函数，带单测）
 src-tauri/src/repo/     groups / words / sessions / word_progress / settings / backup
@@ -43,7 +44,8 @@ src/lib/ipc.ts          全部后端调用集中于此，类型来自 src/types.
 2. **错题本不建表**，等价于 `words.status = 'learning'`。别加 `mistakes` 表，会不同步。
 3. **一场会话内词不重复**由 `UNIQUE(session_id, word_id)` 兜底；顺序由 `seq` 记录，别用内存下标当唯一真相。
 4. **拼音字段不存在**，不要顺手加回来（产品已排除）。导入解析也不处理拼音。
-5. **前端不拼 SQL、不绕过 `src/lib/ipc.ts`**。新增后端能力 = 加命令 + 加 ipc 方法 + 加类型。
+5. **分组是树**（`groups.parent_id`）：选父分组就等于选它全部子孙，抽题/打印/统计都靠 `sampler::expand_group_ids` 展开；别在别处再写一套遍历。
+6. **前端不拼 SQL、不绕过 `src/lib/ipc.ts`**。新增后端能力 = 加命令 + 加 ipc 方法 + 加类型。
 
 ## 代码约定
 

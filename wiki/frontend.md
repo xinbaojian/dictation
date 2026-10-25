@@ -28,7 +28,7 @@ related: [architecture.md, decisions.md]
 | 页面 | 文件 | 关键点 |
 |---|---|---|
 | 抽题配置 | `pages/Pick.tsx` | 分组多选、范围、题量、可抽数量（120ms 防抖）；顶部「继续上次」横幅 |
-| 默写 | `pages/Quiz.tsx` | 遮罩揭示、键盘快捷键、进度落库、`advancing` 锁 |
+| 默写 | `pages/Quiz.tsx` | 进入即自动显示、到点遮罩、键盘快捷键、进度落库、`advancing` 锁 |
 | 批改 | `pages/Review.tsx` | 网格点错、`skip_marked` 预置、提交后 0.9s 跳转 |
 | 错题本 | `pages/Mistakes.tsx` | 分组筛选、连对进度条（读设置）、专项默写、打印 |
 | 记录 | `pages/History.tsx` | 50 条列表 + 详情弹窗 + 只练本次错词 |
@@ -55,4 +55,4 @@ related: [architecture.md, decisions.md]
 
 ## 容易忘的
 
-Quiz 的自动遮罩定时器依赖 `[revealed, settings, index]`，翻页会重置；`maskSeconds = 0` 表示不自动隐藏。
+Quiz 进入每个词会 `setRevealed(true)`，再由 `[revealed, settings, index]` 的定时器到点遮罩；`maskSeconds = 0` 表示一直显示。批改页的错字标记是 `Map<itemId, Set<字下标>>`，空集合 = 整词错。

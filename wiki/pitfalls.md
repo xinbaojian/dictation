@@ -51,7 +51,7 @@ DELETE FROM words WHERE group_id NOT IN (SELECT id FROM groups);
 
 ## 7. Tailwind 4 没有 tailwind.config.js
 
-主题写在 `src/index.css` 的 ```theme` 块。新增自定义色/字体走那里，不要再建 config。
+主题写在 `src/index.css` 的 `@theme` 块。新增自定义色/字体走那里，不要再建 config。
 
 ## 8. 打印样式不生效先检查层级
 
@@ -61,3 +61,25 @@ DELETE FROM words WHERE group_id NOT IN (SELECT id FROM groups);
 ## 9. cargo test 与 tauri dev 抢 target 锁
 
 会卡在 `Blocking waiting for file lock`。串行执行即可。
+
+## 10. 开发模式的数据在 target 目录里
+
+便携化的代价：`"cargo run"` / `"tauri dev"` 的 `current_exe()` 是 `src-tauri/target/debug/dictation.exe`，库就落在那里。
+`cargo clean` / `"make clean"` 会连库一起删掉。
+
+**做法**：开发时别存真实数据；录词请用安装后的正式版本（数据在程序同级目录）。
+
+## 11. 便携模式的数据会随卸载删除
+
+数据在程序同级目录，NSIS 卸载会删掉整个安装目录（含 `dictation.db`）。
+**做法**：卸载/换机前先在「设置 → 数据与备份」导出备份，或整个文件夹拷走。
+
+## 12. 删了数据库，数据却又回来了
+
+两个原因叠在一起：
+
+1. 便携化迁移时把 `%APPDATA%` 的旧库**复制**过来，却保留了原文件，而「目标不存在就从旧位置搬」的判断每次启动都执行 —— 用户删库后又被搬回来
+2. 只删 `dictation.db` 而留下 `-wal`，SQLite 打开时可能把旧页恢复出来
+
+**已修**：`db/mod.rs` 在初始化后写 `.dictation-initialized` 标记，只有「没库 + 没标记」才搬旧数据；库不存在时顺带清理孤立的 `-wal / -shm`。
+后来者注意：任何「自动恢复/自动迁移」都必须是一次性的，别留一个每次启动都会触发的复活路径。

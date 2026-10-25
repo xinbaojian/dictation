@@ -43,7 +43,36 @@ pub struct Candidate {
 ///
 /// - group_ids 为空表示全部分组（错题本模式常用）
 /// - 跨组按词语文本去重，保留分组顺序靠前的一条，避免一场默写重复写同一个词
+/// 选了父分组就等于选了它下面所有子分组
+pub fn expand_group_ids(conn: &Connection, group_ids: &[i64]) -> AppResult<Vec<i64>> {
+    if group_ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut parents: Vec<(i64, Option<i64>)> = Vec::new();
+    {
+        let mut stmt = conn.prepare("SELECT id, parent_id FROM groups")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?)))?;
+        for row in rows {
+            parents.push(row?);
+        }
+    }
+    let mut out: Vec<i64> = group_ids.to_vec();
+    let mut cursor = 0;
+    while cursor < out.len() {
+        let current = out[cursor];
+        cursor += 1;
+        for (id, parent) in &parents {
+            if *parent == Some(current) && !out.contains(id) {
+                out.push(*id);
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub fn collect(conn: &Connection, group_ids: &[i64], scope: Scope) -> AppResult<Vec<Candidate>> {
+    let group_ids = expand_group_ids(conn, group_ids)?;
+    let group_ids = group_ids.as_slice();
     let mut stmt = conn.prepare(
         "SELECT w.id, w.text, w.group_id, w.status
          FROM words w
@@ -91,8 +120,8 @@ mod tests {
 
     fn seed() -> (Connection, i64, i64) {
         let conn = db::open_memory();
-        let g1 = groups::create(&conn, "1", "第一单元").unwrap();
-        let g2 = groups::create(&conn, "2", "第二单元").unwrap();
+        let g1 = groups::create(&conn, None, "1", "第一单元").unwrap();
+        let g2 = groups::create(&conn, None, "2", "第二单元").unwrap();
         words::add(&conn, g1.id, "春天", None).unwrap();
         words::add(&conn, g1.id, "夏天", None).unwrap();
         words::add(&conn, g2.id, "春天", None).unwrap();
@@ -141,6 +170,22 @@ mod tests {
         }
         assert_eq!(collect(&conn, &[g1, g2], Scope::Unlearned).unwrap().len(), 0);
         assert_eq!(collect(&conn, &[g1, g2], Scope::All).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn selecting_parent_includes_children() {
+        let conn = db::open_memory();
+        let book = groups::create(&conn, None, "1", "二年级上册").unwrap();
+        let unit1 = groups::create(&conn, Some(book.id), "1", "第一单元").unwrap();
+        let unit2 = groups::create(&conn, Some(book.id), "2", "第二单元").unwrap();
+        crate::repo::words::add(&conn, unit1.id, "春天", None).unwrap();
+        crate::repo::words::add(&conn, unit2.id, "夏天", None).unwrap();
+
+        let list = collect(&conn, &[book.id], Scope::All).unwrap();
+        assert_eq!(list.len(), 2);
+
+        let only_unit1 = collect(&conn, &[unit1.id], Scope::All).unwrap();
+        assert_eq!(only_unit1.len(), 1);
     }
 
     #[test]
