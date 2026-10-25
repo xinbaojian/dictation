@@ -89,6 +89,12 @@ pub fn list_sessions(state: State<'_, AppState>, limit: i64) -> AppResult<Vec<Se
     sessions::list(&conn, limit)
 }
 
+#[tauri::command]
+pub fn delete_session(state: State<'_, AppState>, id: i64) -> AppResult<()> {
+    let conn = state.conn()?;
+    sessions::delete(&conn, id)
+}
+
 // ---------- 错题本 ----------
 
 #[tauri::command]

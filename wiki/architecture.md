@@ -40,7 +40,7 @@ React 页面 ──invoke──> commands/*.rs ──> repo/*.rs ──> rusqlit
 
 - 命令参数/返回值用 `#[serde(rename_all = "camelCase")]`，JS 侧 camelCase，Rust 侧 snake_case，由 Tauri 自动转换
 - 返回类型必须是可 Serialize 的 DTO，禁止把 `rusqlite::Row` 之类的内部类型漏出去
-- 共 30 个命令，分三组：`commands/library.rs`（词表 11）、`commands/quiz.rs`（默写/错题 12）、`commands/system.rs`（设置/备份 7）
+- 共 30 个命令，分三组：`commands/library.rs`（词表 11）、`commands/quiz.rs`（默写/错题 13）、`commands/system.rs`（设置/备份 7）
 
 ## 数据库连接约定
 

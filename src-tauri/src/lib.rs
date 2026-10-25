@@ -59,6 +59,7 @@ pub fn run() {
             commands::quiz::submit_review,
             commands::quiz::retry_session,
             commands::quiz::list_sessions,
+            commands::quiz::delete_session,
             commands::quiz::list_mistakes,
             commands::quiz::set_word_mastered,
             commands::system::get_settings,

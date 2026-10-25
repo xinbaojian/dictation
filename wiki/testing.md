@@ -10,7 +10,7 @@ related: [architecture.md, quiz-flow.md]
 ## 怎么跑
 
 ```bash
-cd src-tauri && cargo test   # 54 个单测，秒级
+cd src-tauri && cargo test   # 56 个单测，秒级
 npm run typecheck            # 前端类型（无单测框架，靠 strict + 类型）
 npm run build                # 构建即验证
 ```
@@ -26,7 +26,7 @@ npm run build                # 构建即验证
 | `repo/groups.rs`（10） | 自动编号与排序、路径与子孙统计、删组级联删词、空名拒绝；拖动：换父级带子树、同级重排、跨父级顺序、自定义编号保留、拖进自己子孙被拒、未知分组被拒 |
 | `repo/words.rs`（5） | trim 后入库、重复词友好报错、批量导入跳过已存在、改名撞车报错、删除 |
 | `repo/word_progress.rs`（4） | 错→learning、新词对→mastered、learning 需连对 2 次、答错清零 streak |
-| `repo/sessions.rs`（10） | 建会话顺序与条目、空池报错、批改写回词条状态、错字下标去重升序、禁止重复提交、进度与 skip 持久化、active 查询、错词重开；连字开关默认关、开启后不漏词 |
+| `repo/sessions.rs`（12） | 建会话顺序与条目、空池报错、批改写回词条状态、错字下标去重升序、禁止重复提交、进度与 skip 持久化、active 查询、错词重开、删记录级联删条目且不动词条进度；连字开关默认关、开启后不漏词 |
 | `repo/backup.rs`（3） | 导出→导入往返（含进度恢复）、嵌套分组往返、坏文件报错 |
 | `db`（5） | 可写目录探测、旧库只搬一次、无标记才搬、孤儿 WAL 清理、删库不复活 |
 

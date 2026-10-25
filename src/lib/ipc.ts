@@ -52,6 +52,8 @@ export const api = {
     invoke<ReviewResult>("submit_review", { sessionId, wrongItems }),
   retrySession: (id: number) => invoke<Session>("retry_session", { id }),
   listSessions: (limit: number) => invoke<SessionSummary[]>("list_sessions", { limit }),
+  /** 删记录不动词条进度：错题本与连对次数是学习结果，不跟着记录走 */
+  deleteSession: (id: number) => invoke<void>("delete_session", { id }),
 
   // 错题本
   listMistakes: (groupId: number | null) => invoke<Mistake[]>("list_mistakes", { groupId }),

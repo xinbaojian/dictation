@@ -310,6 +310,18 @@ pub fn abandon(conn: &Connection, session_id: i64) -> AppResult<()> {
     Ok(())
 }
 
+/// 删除一条默写记录：`session_items` 由外键级联删掉。
+///
+/// 只删记录本身，**不回滚词条进度**——错题本状态、连对次数是学习结果，
+/// 不该因为「历史记录里这条不好看」而一起消失。
+pub fn delete(conn: &Connection, session_id: i64) -> AppResult<()> {
+    let changed = conn.execute("DELETE FROM sessions WHERE id = ?1", params![session_id])?;
+    if changed == 0 {
+        return Err(AppError::msg("默写记录不存在或已被删除"));
+    }
+    Ok(())
+}
+
 /// 批改提交：写入每题对错、推进词条状态、关闭会话
 pub fn submit_review(
     conn: &Connection,
@@ -573,5 +585,32 @@ mod tests {
     fn chain_setting_is_off_by_default() {
         let conn = db::open_memory();
         assert!(!settings::load(&conn).unwrap().chain_by_char);
+    }
+
+    #[test]
+    fn delete_removes_session_and_items_only() {
+        let (conn, gid) = seed();
+        let id = create(&conn, &[gid], Scope::All, 0, false).unwrap();
+        let s = get(&conn, id).unwrap();
+        finish_quiz(&conn, id).unwrap();
+        submit_review(&conn, id, &marks(&[s.items[0].id])).unwrap();
+        assert_eq!(words::list_mistakes(&conn, None).unwrap().len(), 1);
+
+        delete(&conn, id).unwrap();
+
+        assert!(get(&conn, id).is_err(), "记录应该没了");
+        let items: i64 = conn
+            .query_row("SELECT COUNT(*) FROM session_items WHERE session_id = ?1", params![id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(items, 0, "session_items 应随记录级联删除");
+        // 词条本身和它的错题状态不受影响
+        assert_eq!(words::list(&conn, gid).unwrap().len(), 3);
+        assert_eq!(words::list_mistakes(&conn, None).unwrap().len(), 1, "删记录不该把词移出错题本");
+    }
+
+    #[test]
+    fn delete_missing_session_rejected() {
+        let conn = db::open_memory();
+        assert!(delete(&conn, 9999).is_err());
     }
 }

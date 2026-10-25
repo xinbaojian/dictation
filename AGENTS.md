@@ -18,7 +18,7 @@ make                       # 打包 + 部署到 D:/StudyApp/dictation
 npm run tauri dev          # 开发运行（Vite 1420 + Rust）
 npm run typecheck          # 前端类型检查（tsc --noEmit）
 npm run build              # 前端构建（typecheck + vite build）
-cd src-tauri && cargo test # 后端单测，当前 54 个
+cd src-tauri && cargo test # 后端单测，当前 56 个
 cd src-tauri && cargo build
 npm run tauri build        # 出 NSIS 安装包
 ```
@@ -34,7 +34,7 @@ src-tauri/migrations/   0001 表结构、0002 会话进度、0003 错字标记�
 src-tauri/src/db/       连接 + WAL + 迁移
 src-tauri/src/domain/   text.rs 粘贴切分、sampler.rs 抽题（纯函数，带单测）
 src-tauri/src/repo/     groups / words / sessions / word_progress / settings / backup
-src-tauri/src/commands/ library.rs / quiz.rs / system.rs（薄封装，共 30 个命令）
+src-tauri/src/commands/ library.rs / quiz.rs / system.rs（薄封装，共 31 个命令）
 src-tauri/src/speech/   TTS 抽象 trait Speaker（V1 只有 NullSpeaker）
 src/pages/              Pick / Quiz / Review / Mistakes / History / Settings / Wordbook / PrintSheet
 src/lib/ipc.ts          全部后端调用集中于此，类型来自 src/types.ts

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import ConfirmModal from "../components/ConfirmModal";
 import Modal from "../components/Modal";
 import { Toast, useNotice } from "../components/Toast";
 import { api, errorMessage, formatTime } from "../lib/ipc";
@@ -19,6 +20,7 @@ const STATUS_TEXT: Record<string, string> = {
 export default function History({ onStart, onReview }: HistoryProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [detail, setDetail] = useState<Session | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const { notice, notify } = useNotice();
@@ -57,6 +59,17 @@ export default function History({ onStart, onReview }: HistoryProps) {
     }
   };
 
+  const remove = async (target: SessionSummary) => {
+    try {
+      await api.deleteSession(target.id);
+      if (detail?.id === target.id) setDetail(null);
+      setSessions(await api.listSessions(50));
+      notify("ok", "已删除这条记录");
+    } catch (e) {
+      notify("error", errorMessage(e));
+    }
+  };
+
   if (loading) {
     return <div className="flex flex-1 items-center justify-center text-sm text-stone-400">加载中…</div>;
   }
@@ -82,7 +95,7 @@ export default function History({ onStart, onReview }: HistoryProps) {
                 <th className="w-24 py-2 text-left font-normal">题量</th>
                 <th className="w-24 py-2 text-left font-normal">错词</th>
                 <th className="w-24 py-2 text-left font-normal">状态</th>
-                <th className="w-32 py-2 pr-8 text-right font-normal">操作</th>
+                <th className="w-36 py-2 pr-8 text-right font-normal">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -112,7 +125,7 @@ export default function History({ onStart, onReview }: HistoryProps) {
                     )}
                   </td>
                   <td className="py-2.5 text-xs text-stone-500">{STATUS_TEXT[s.status] ?? s.status}</td>
-                  <td className="py-2.5 pr-8 text-right">
+                  <td className="whitespace-nowrap py-2.5 pr-8 text-right">
                     {s.status === "reviewing" && (
                       <button
                         onClick={(e) => {
@@ -124,6 +137,15 @@ export default function History({ onStart, onReview }: HistoryProps) {
                         去批改
                       </button>
                     )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPendingDelete(s);
+                      }}
+                      className="ml-1 rounded px-2 py-1 text-xs text-stone-400 hover:bg-rose-50 hover:text-rose-600"
+                    >
+                      删除
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -196,6 +218,29 @@ export default function History({ onStart, onReview }: HistoryProps) {
             })}
           </div>
         </Modal>
+      )}
+
+      {pendingDelete && (
+        <ConfirmModal
+          title="删除默写记录"
+          body={
+            "将删除 " +
+            formatTime(pendingDelete.startedAt) +
+            " 的「" +
+            pendingDelete.groupLabel +
+            "」记录（" +
+            pendingDelete.total +
+            " 词）" +
+            (pendingDelete.status === "reviewing" ? "，这次默写还没批改，删了就不能再批" : "") +
+            "。删除后无法恢复，词条的错题状态和练习进度不受影响。"
+          }
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+            const target = pendingDelete;
+            setPendingDelete(null);
+            void remove(target);
+          }}
+        />
       )}
 
       <Toast notice={notice} />
