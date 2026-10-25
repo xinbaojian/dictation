@@ -20,6 +20,8 @@ const LIMITS = [10, 20, 30, 0];
 export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
   const [groups, setGroups] = useState<Group[]>([]);
   const [selected, setSelected] = useState<number[]>([]);
+  /** 折叠起来的分组 id；默认把所有带子分组的分组都折叠 */
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [scope, setScope] = useState<Scope>("unlearned");
   const [limit, setLimit] = useState(20);
   const [count, setCount] = useState(0);
@@ -40,6 +42,7 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
         ]);
         setGroups(list);
         setSelected(list.map((g) => g.id));
+        setCollapsed(new Set(list.filter((g) => g.hasChildren).map((g) => g.id)));
         setActive(session);
         setChainByChar(settings?.chainByChar ?? false);
       } catch (e) {
@@ -76,6 +79,44 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
     () => groups.filter((g) => g.parentId === null).reduce((sum, g) => sum + g.totalWordCount, 0),
     [groups],
   );
+
+  // 每个分组的直属子分组数，用来决定要不要画折叠箭头
+  const childCount = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const g of groups) {
+      if (g.parentId != null) map.set(g.parentId, (map.get(g.parentId) ?? 0) + 1);
+    }
+    return map;
+  }, [groups]);
+
+  // 祖先被折叠的节点不显示
+  const visibleGroups = useMemo(() => {
+    const byId = new Map(groups.map((g) => [g.id, g]));
+    return groups.filter((g) => {
+      let parent = g.parentId;
+      for (let guard = 0; parent != null && guard < 64; guard += 1) {
+        if (collapsed.has(parent)) return false;
+        parent = byId.get(parent)?.parentId ?? null;
+      }
+      return true;
+    });
+  }, [groups, collapsed]);
+
+  const parentIds = useMemo(() => groups.filter((g) => g.hasChildren).map((g) => g.id), [groups]);
+  const allCollapsed = parentIds.length > 0 && parentIds.every((id) => collapsed.has(id));
+
+  const toggleCollapse = (id: number) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllCollapse = () => {
+    setCollapsed(allCollapsed ? new Set() : new Set(parentIds));
+  };
 
   const subtreeIds = (id: number): number[] => {
     const out = [id];
@@ -174,27 +215,53 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
         <section className="mt-7">
           <div className="mb-2 flex items-baseline justify-between">
             <h2 className="text-sm font-medium text-stone-700">选择分组</h2>
-            <button
-              onClick={() => setSelected(selected.length === groups.length ? [] : groups.map((g) => g.id))}
-              className="text-xs text-stone-500 hover:text-stone-800"
-            >
-              {selected.length === groups.length ? "全部取消" : "全选"}
-            </button>
+            <div className="flex items-center gap-3">
+              {parentIds.length > 0 && (
+                <button
+                  onClick={toggleAllCollapse}
+                  className="text-xs text-stone-500 hover:text-stone-800"
+                >
+                  {allCollapsed ? "全部展开" : "全部折叠"}
+                </button>
+              )}
+              <button
+                onClick={() => setSelected(selected.length === groups.length ? [] : groups.map((g) => g.id))}
+                className="text-xs text-stone-500 hover:text-stone-800"
+              >
+                {selected.length === groups.length ? "全部取消" : "全选"}
+              </button>
+            </div>
           </div>
           <div className="overflow-hidden rounded-lg border border-stone-200 bg-white">
-            {groups.map((g) => {
+            {visibleGroups.map((g) => {
               const on = selected.includes(g.id);
               const partial = !on && subtreeIds(g.id).some((x) => selected.includes(x));
+              const kids = childCount.get(g.id) ?? 0;
+              const isCollapsed = collapsed.has(g.id);
               return (
-                <button
+                <div
                   key={g.id}
                   onClick={() => toggleGroup(g.id)}
                   style={{ paddingLeft: 12 + g.depth * 18 }}
                   className={
-                    "flex w-full items-center gap-2.5 border-b border-stone-100 px-3 py-2 text-left last:border-b-0 " +
-                    (on ? "bg-amber-50/70" : "hover:bg-stone-50")
+                    "flex w-full cursor-pointer items-center gap-2.5 border-b border-stone-100 px-3 py-2 text-left last:border-b-0 " +
+                    (on ? "bg-amber-50/70 hover:bg-amber-50" : "hover:bg-stone-50")
                   }
                 >
+                  {kids > 0 ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleCollapse(g.id);
+                      }}
+                      title={isCollapsed ? "展开子分组" : "折叠子分组"}
+                      className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[9px] text-stone-400 hover:bg-stone-200 hover:text-stone-700"
+                    >
+                      {isCollapsed ? "▸" : "▾"}
+                    </button>
+                  ) : (
+                    <span className="h-4 w-4 shrink-0" />
+                  )}
                   <span
                     className={
                       "flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[9px] " +
@@ -211,13 +278,16 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
                   <span className="min-w-0 flex-1 truncate text-sm text-stone-700">
                     {g.depth === 0 ? g.name : "· " + g.name}
                   </span>
+                  {kids > 0 && isCollapsed && (
+                    <span className="shrink-0 text-[11px] text-stone-400">{kids} 个子分组</span>
+                  )}
                   <span className="shrink-0 text-xs text-stone-400">
                     {g.totalWordCount} 词
                     {g.totalLearningCount > 0 && (
                       <span className="text-rose-500"> · {g.totalLearningCount} 错题</span>
                     )}
                   </span>
-                </button>
+                </div>
               );
             })}
           </div>
