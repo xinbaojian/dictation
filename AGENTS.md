@@ -18,7 +18,7 @@ make                       # 打包 + 部署到 D:/StudyApp/dictation
 npm run tauri dev          # 开发运行（Vite 1420 + Rust）
 npm run typecheck          # 前端类型检查（tsc --noEmit）
 npm run build              # 前端构建（typecheck + vite build）
-cd src-tauri && cargo test # 后端单测，当前 49 个
+cd src-tauri && cargo test # 后端单测，当前 54 个
 cd src-tauri && cargo build
 npm run tauri build        # 出 NSIS 安装包
 ```

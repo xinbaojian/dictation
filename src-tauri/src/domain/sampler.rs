@@ -1,4 +1,6 @@
 use crate::error::{AppError, AppResult};
+use rand::seq::SliceRandom;
+use rand::Rng;
 use rusqlite::Connection;
 use std::collections::HashSet;
 
@@ -112,6 +114,46 @@ pub fn collect(conn: &Connection, group_ids: &[i64], scope: Scope) -> AppResult<
     Ok(out)
 }
 
+/// 词语里的字集合，用于「连字」判断（空白不算字）
+fn char_set(text: &str) -> HashSet<char> {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// 连字排序：先随机打散，再从随机起点出发，每一步优先挑「和上一个词有相同字」的候选。
+///
+/// 没有任何候选共享字时退化成随机挑一个，所以结果始终是入参的一个排列——
+/// 不漏词、不重复。对应设置项「下一个词优先和上一个词有相同的字」。
+pub fn chain_by_shared_char(mut words: Vec<Candidate>, rng: &mut impl Rng) -> Vec<Candidate> {
+    words.shuffle(rng);
+    let mut remaining = words;
+    // 字集合与 remaining 同下标，swap_remove 时一起换，避免每步重复建集合
+    let mut sets: Vec<HashSet<char>> = remaining.iter().map(|c| char_set(&c.text)).collect();
+    let mut out: Vec<Candidate> = Vec::with_capacity(remaining.len());
+    let mut last: Option<HashSet<char>> = None;
+    while !remaining.is_empty() {
+        let picked = match &last {
+            Some(set) => {
+                let shared: Vec<usize> = sets
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.iter().any(|ch| set.contains(ch)))
+                    .map(|(i, _)| i)
+                    .collect();
+                if shared.is_empty() {
+                    rng.gen_range(0..remaining.len())
+                } else {
+                    shared[rng.gen_range(0..shared.len())]
+                }
+            }
+            None => rng.gen_range(0..remaining.len()),
+        };
+        let next = remaining.swap_remove(picked);
+        last = Some(sets.swap_remove(picked));
+        out.push(next);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +233,62 @@ mod tests {
     #[test]
     fn invalid_scope_rejected() {
         assert!(Scope::parse("nope").is_err());
+    }
+
+    fn cand(text: &str, id: i64) -> Candidate {
+        Candidate { word_id: id, text: text.to_string(), group_id: 1 }
+    }
+
+    /// 4 个词共享「天」，1 个孤立词。连字后 4 个共享词必须连续，
+    /// 孤立词只能被挤到开头或结尾（与种子无关，可放心断言）
+    #[test]
+    fn chain_keeps_shared_words_together() {
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        for seed in 0..20 {
+            let words = vec![
+                cand("春天", 1),
+                cand("月亮", 2),
+                cand("秋天", 3),
+                cand("夏天", 4),
+                cand("冬天", 5),
+            ];
+            let mut rng = StdRng::seed_from_u64(seed);
+            let out = chain_by_shared_char(words, &mut rng);
+
+            assert_eq!(out.len(), 5, "不能漏词");
+            let isolated = out.iter().position(|c| c.text == "月亮").unwrap();
+            assert!(
+                isolated == 0 || isolated == 4,
+                "孤立词应被挤到首尾，实际第 {isolated} 位：{:?}",
+                out.iter().map(|c| &c.text).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn chain_without_shared_chars_is_still_a_permutation() {
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        let words = vec![cand("大海", 1), cand("月亮", 2), cand("苹果", 3)];
+        let mut rng = StdRng::seed_from_u64(42);
+        let out = chain_by_shared_char(words, &mut rng);
+        let mut texts: Vec<&str> = out.iter().map(|c| c.text.as_str()).collect();
+        texts.sort_unstable();
+        assert_eq!(texts, vec!["大海", "月亮", "苹果"]);
+    }
+
+    #[test]
+    fn chain_handles_zero_and_one() {
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        let mut rng = StdRng::seed_from_u64(1);
+        assert!(chain_by_shared_char(vec![], &mut rng).is_empty());
+        let one = chain_by_shared_char(vec![cand("春天", 1)], &mut rng);
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].text, "春天");
     }
 }

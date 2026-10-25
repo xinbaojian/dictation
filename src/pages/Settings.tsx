@@ -158,6 +158,32 @@ export default function Settings() {
                 ))}
               </div>
             </div>
+
+            <div>
+              <p className="mb-1.5 text-xs text-stone-500">连字抽词：下一个词优先和上一个词有相同的字</p>
+              <div className="flex gap-2">
+                {[
+                  { value: false, label: "关闭" },
+                  { value: true, label: "开启" },
+                ].map((o) => (
+                  <button
+                    key={o.label}
+                    onClick={() => setValue({ ...value, chainByChar: o.value })}
+                    className={
+                      "rounded-md border px-3 py-1.5 text-sm " +
+                      (value.chainByChar === o.value
+                        ? "border-stone-800 bg-stone-800 text-white"
+                        : "border-stone-200 text-stone-600 hover:border-stone-300")
+                    }
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1.5 text-[11px] leading-relaxed text-stone-400">
+                「春天」之后优先出「秋天」「夏天」，帮孩子按字形联想；剩下的词里没有同字的就照常随机。只在随机抽词时生效。
+              </p>
+            </div>
           </div>
 
           <div className="mt-5 flex justify-end">

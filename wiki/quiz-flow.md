@@ -13,7 +13,7 @@ related: [data-model.md, decisions.md]
 2. 过滤分组（`group_ids` 为空 = 全部分组，错题专项常用）
 3. 过滤范围：`all` 全要 / `unlearned` 排除 mastered / `mistake` 只要 learning
 4. **跨组按 text 去重**，保留排序靠前的那条
-5. 随机洗牌（`rand` Fisher–Yates）→ 截取前 N（N=0 表示全部）
+5. 排序：默认 `rand` Fisher–Yates 洗牌；开了设置项 `chainByChar` 则走 `sampler::chain_by_shared_char`（打散后每一步优先挑和上一个词有相同字的词）→ 截取前 N（N=0 表示全部）
 
 候选为空时返回带病因的中文提示（"错题本里还没有词…"等），不是干巴巴的报错。
 

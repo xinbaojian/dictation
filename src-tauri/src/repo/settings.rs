@@ -13,6 +13,8 @@ pub struct SettingsDto {
     pub streak_to_master: i64,
     /// 默写页词语字号（px）
     pub word_font_size: i64,
+    /// 随机抽词时优先让下一个词和上一个词有相同的字（连字）
+    pub chain_by_char: bool,
 }
 
 impl Default for SettingsDto {
@@ -21,6 +23,7 @@ impl Default for SettingsDto {
             mask_seconds: 3,
             streak_to_master: 2,
             word_font_size: 96,
+            chain_by_char: false,
         }
     }
 }
@@ -39,6 +42,7 @@ pub fn save(conn: &Connection, input: &SettingsDto) -> AppResult<SettingsDto> {
         mask_seconds: input.mask_seconds.clamp(0, 15),
         streak_to_master: input.streak_to_master.clamp(1, 5),
         word_font_size: input.word_font_size.clamp(48, 200),
+        chain_by_char: input.chain_by_char,
     };
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)

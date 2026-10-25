@@ -33,4 +33,4 @@ tags: [index]
 ## 当前状态
 
 M1–M4 全部完成：词表（多级分组 + 拖动调整结构）、默写、批改、错题本、历史、设置、手动备份、打印复习单、NSIS 安装包。
-后端 49 个单测通过；前端 `tsc --noEmit` + `vite build` 通过。详见 [roadmap.md](./roadmap.md)。
+后端 54 个单测通过；前端 `tsc --noEmit` + `vite build` 通过。详见 [roadmap.md](./roadmap.md)。

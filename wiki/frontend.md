@@ -32,7 +32,7 @@ related: [architecture.md, decisions.md]
 | 批改 | `pages/Review.tsx` | 网格点错、`skip_marked` 预置、提交后 0.9s 跳转 |
 | 错题本 | `pages/Mistakes.tsx` | 分组筛选、连对进度条（读设置）、专项默写、打印 |
 | 记录 | `pages/History.tsx` | 50 条列表 + 详情弹窗 + 只练本次错词 |
-| 设置 | `pages/Settings.tsx` | 遮罩/连对/字号、备份导出导入、打开数据目录 |
+| 设置 | `pages/Settings.tsx` | 遮罩/连对/字号/连字抽词、备份导出导入、打开数据目录 |
 | 词表 | `pages/Wordbook.tsx` | 分组树（可折叠、**可拖动调整层级与顺序**）、词数/错题/最近练习、行内编辑、粘贴导入、标记错题 |
 | 打印 | `pages/PrintSheet.tsx` | A4 排版 + 田字格，`window.print()` |
 

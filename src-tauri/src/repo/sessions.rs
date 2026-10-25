@@ -1,4 +1,4 @@
-use crate::domain::sampler::Scope;
+use crate::domain::sampler::{self, Scope};
 use crate::error::{AppError, AppResult};
 use crate::repo::{settings, word_progress};
 use rand::seq::SliceRandom;
@@ -127,7 +127,13 @@ pub fn create(
     }
     if shuffle {
         let mut rng = rand::thread_rng();
-        candidates.shuffle(&mut rng);
+        candidates = if settings::load(conn)?.chain_by_char {
+            // 「连字」：优先让下一个词和上一个词有相同的字，整体顺序仍然随机
+            sampler::chain_by_shared_char(candidates, &mut rng)
+        } else {
+            candidates.shuffle(&mut rng);
+            candidates
+        };
     }
     if limit > 0 {
         candidates.truncate(limit as usize);
@@ -546,5 +552,26 @@ mod tests {
         assert_eq!(retried.total, 2);
         assert_eq!(retried.mode, "mistake");
         assert_eq!(retried.group_label, "错题本");
+    }
+
+    #[test]
+    fn chain_setting_keeps_every_word_once() {
+        let (conn, gid) = seed();
+        settings::save(
+            &conn,
+            &settings::SettingsDto { chain_by_char: true, ..Default::default() },
+        )
+        .unwrap();
+
+        let id = create(&conn, &[gid], Scope::All, 0, true).unwrap();
+        let mut texts: Vec<String> = get(&conn, id).unwrap().items.into_iter().map(|i| i.text).collect();
+        texts.sort();
+        assert_eq!(texts, vec!["夏天", "春天", "秋天"], "连字只改顺序，不能漏词或重复");
+    }
+
+    #[test]
+    fn chain_setting_is_off_by_default() {
+        let conn = db::open_memory();
+        assert!(!settings::load(&conn).unwrap().chain_by_char);
     }
 }

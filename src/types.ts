@@ -107,6 +107,8 @@ export interface Settings {
   maskSeconds: number;
   streakToMaster: number;
   wordFontSize: number;
+  /** 随机抽词时优先让下一个词和上一个词有相同的字 */
+  chainByChar: boolean;
 }
 
 export interface ReviewResult {

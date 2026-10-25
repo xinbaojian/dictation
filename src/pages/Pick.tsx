@@ -24,6 +24,7 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
   const [limit, setLimit] = useState(20);
   const [count, setCount] = useState(0);
   const [active, setActive] = useState<Session | null>(null);
+  const [chainByChar, setChainByChar] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const { notice, notify } = useNotice();
@@ -31,10 +32,16 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
   useEffect(() => {
     (async () => {
       try {
-        const [list, session] = await Promise.all([api.listGroups(), api.activeSession()]);
+        const [list, session, settings] = await Promise.all([
+          api.listGroups(),
+          api.activeSession(),
+          // 读设置失败不该挡住开始默写，拿不到就按默认（不连字）显示
+          api.getSettings().catch(() => null),
+        ]);
         setGroups(list);
         setSelected(list.map((g) => g.id));
         setActive(session);
+        setChainByChar(settings?.chainByChar ?? false);
       } catch (e) {
         notify("error", errorMessage(e));
       } finally {
@@ -266,7 +273,9 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
               可抽 <span className="text-lg font-semibold text-stone-900">{count}</span> 词
               {count > 0 && limit > 0 && count > limit ? "，本次抽 " + effectiveLimit + " 个" : ""}
             </p>
-            <p className="mt-0.5 text-xs text-stone-400">顺序随机，抽完自动进入批改</p>
+            <p className="mt-0.5 text-xs text-stone-400">
+              {chainByChar ? "顺序随机，下一个词优先和上一个词有相同的字" : "顺序随机"}，抽完自动进入批改
+            </p>
           </div>
           <button
             onClick={start}
