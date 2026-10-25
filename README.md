@@ -53,6 +53,8 @@ make install INSTALL_DIR=E:/Apps/dictation   # 换部署目录
 
 部署目标默认是 `D:/StudyApp/dictation`，会覆盖其中的 `dictation.exe`；应用正在运行时会拒绝覆盖并提示先关窗口。
 
+在 Git Bash、PowerShell、cmd 里都能跑（Makefile 会自动把 Git 自带的 bash 指给 make，需要装 Git for Windows）。
+
 ## 目录
 
 ```

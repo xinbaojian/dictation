@@ -10,11 +10,29 @@
 #
 # 覆盖部署目录：make install INSTALL_DIR=E:/Apps/dictation
 #
-# 注：recipe 里的提示文字一律用 ASCII —— Windows 版 make 会按控制台代码页
+# 注 1：recipe 里的提示文字一律用 ASCII —— Windows 版 make 会按控制台代码页
 # 解码 Makefile，中文 echo 在 GBK 控制台下会变成乱码；注释不受影响。
+# 注 2：Windows 版 make 只认 Windows 路径，SHELL 写成 /bin/bash 会被静默忽略并
+# 退回 cmd.exe —— 那时 `mkdir -p` 会建出一个叫「-p」的目录，cp/rm 只是碰巧
+# 命中 PATH 里的 Git coreutils 才不报错。所以下面显式把 Git 自带的 bash 指给
+# make：在 Git Bash、PowerShell、cmd 里跑结果都一样。
 
 SHELL := /bin/bash
 .DEFAULT_GOAL := install
+
+# 注意：system32 和 WindowsApps 下的 bash.exe 是 WSL 的，路径语义完全不同，不能用
+ifeq ($(OS),Windows_NT)
+  # 8.3 短路径没有空格，$(wildcard) 才认得（它会按空格切分模式）
+  GIT_BASH := $(firstword \
+    $(wildcard C:/PROGRA~1/Git/bin/bash.exe) \
+    $(wildcard C:/PROGRA~1/Git/usr/bin/bash.exe) \
+    $(wildcard $(LOCALAPPDATA)/Programs/Git/bin/bash.exe))
+  ifeq ($(strip $(GIT_BASH)),)
+    # 8.3 被关掉时的兜底：make 4.4 能正确处理带空格的 SHELL
+    GIT_BASH := C:/Program Files/Git/bin/bash.exe
+  endif
+  SHELL := $(GIT_BASH)
+endif
 
 INSTALL_DIR ?= D:/StudyApp/dictation
 APP_EXE     := dictation.exe
@@ -53,4 +71,4 @@ clean:
 	@rm -rf dist
 
 help:
-	@head -10 Makefile | sed 's/^#//'
+	@head -10 Makefile | sed 's/^# \{0,1\}//'

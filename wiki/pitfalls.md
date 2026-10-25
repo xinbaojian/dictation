@@ -95,3 +95,18 @@ Tauri 在 Windows 默认接管 webview 的拖放事件（用来做「把文件�
 
 - `dragover` 里不 `preventDefault()` 就不会有 `drop`，看起来像「松手没反应」
 - `dragleave` 在移到子节点时也会触发，判断「真的离开了」要用 `currentTarget.contains(relatedTarget)`，否则指示器一直闪
+
+## 14. make 在 PowerShell / cmd 里会悄悄退回 cmd.exe
+
+Makefile 里写 `SHELL := /bin/bash` 对 Windows 版 make **无效**：它只认 Windows 路径，找不到就静默退回 `cmd.exe`，不报错。于是：
+
+- `mkdir -p "$(INSTALL_DIR)"` 变成 cmd 的 `mkdir`，在仓库里建出一个叫 `-p` 的目录，第二次跑就报「子目录或文件 -p 已经存在」
+- `cp / rm / ls / awk` 之所以还能跑，只是因为 PATH 里恰好有 Git 的 coreutils —— 换台机器就全崩
+
+**已修**：Makefile 顶部按 `$(OS)` 把 Git 自带的 bash 显式指给 `SHELL`：
+
+- 优先 8.3 短路径 `C:/PROGRA~1/Git/bin/bash.exe`——`$(wildcard)` 会按空格切分模式，带空格的路径匹配不到
+- 8.3 被关掉时兜底用全路径，make 4.4 能正确处理带空格的 `SHELL`
+- **不要**用 `C:\Windows\System32\bash.exe` 或 `WindowsApps\bash.exe`：那是 WSL 的，`D:/...` 这类路径语义完全不同
+
+排查手法：`make` 里加一句 `@echo "SHELL=$(SHELL)"`，正常应打印 bash 路径；打印 `sh.exe` 或空就是没生效。

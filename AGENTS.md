@@ -25,6 +25,8 @@ npm run tauri build        # 出 NSIS 安装包
 
 产物：`src-tauri/target/release/bundle/nsis/Dictation_0.1.0_x64-setup.exe`
 
+`make` 在 Git Bash / PowerShell / cmd 里都能跑：Makefile 顶部按 `OS` 环境变量把 Git 自带的 bash 指给 `SHELL`。**别删这段**——Windows 版 make 不认 `/bin/bash`，会静默退回 cmd，`mkdir -p` 会在仓库里建出一个叫 `-p` 的目录（见 wiki/pitfalls.md 第 14 条）。
+
 ## 目录
 
 ```
