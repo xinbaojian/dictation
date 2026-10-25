@@ -33,7 +33,7 @@ related: [architecture.md, decisions.md]
 | 错题本 | `pages/Mistakes.tsx` | 分组筛选、连对进度条（读设置）、专项默写、打印 |
 | 记录 | `pages/History.tsx` | 50 条列表 + 详情弹窗 + 只练本次错词 |
 | 设置 | `pages/Settings.tsx` | 遮罩/连对/字号、备份导出导入、打开数据目录 |
-| 词表 | `pages/Wordbook.tsx` | 分组栏（词数/错题/最近练习）、行内编辑、粘贴导入、标记错题 |
+| 词表 | `pages/Wordbook.tsx` | 分组树（可折叠、**可拖动调整层级与顺序**）、词数/错题/最近练习、行内编辑、粘贴导入、标记错题 |
 | 打印 | `pages/PrintSheet.tsx` | A4 排版 + 田字格，`window.print()` |
 
 ## 通用组件
@@ -56,3 +56,5 @@ related: [architecture.md, decisions.md]
 ## 容易忘的
 
 Quiz 进入每个词会 `setRevealed(true)`，再由 `[revealed, settings, index]` 的定时器到点遮罩；`maskSeconds = 0` 表示一直显示。批改页的错字标记是 `Map<itemId, Set<字下标>>`，空集合 = 整词错。
+
+词表分组树的拖放（`Wordbook.tsx`）：行上中下三段分别是「变子分组 / 排到前面 / 排到后面」，`zoneOf` 按 `clientY` 与行高的比例切；`targetFor` 负责把落点翻译成 `(parentId, beforeId)` 并挡掉「拖进自己的子孙」，所以非法落点连 `preventDefault` 都不做——不给假的可落点反馈。落点只是渲染态，真正的结构变更全在 `move_group` 里，前端拿到返回的新树直接替换 `groups`。

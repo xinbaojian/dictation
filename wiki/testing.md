@@ -10,7 +10,7 @@ related: [architecture.md, quiz-flow.md]
 ## 怎么跑
 
 ```bash
-cd src-tauri && cargo test   # 34 个单测，秒级
+cd src-tauri && cargo test   # 49 个单测，秒级
 npm run typecheck            # 前端类型（无单测框架，靠 strict + 类型）
 npm run build                # 构建即验证
 ```

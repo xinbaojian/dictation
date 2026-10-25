@@ -41,6 +41,20 @@ pub fn delete_group(state: State<'_, AppState>, id: i64) -> AppResult<groups::De
     groups::delete(&conn, id)
 }
 
+/// 拖动调整结构：移到 `parent_id` 下、插在 `before_id` 之前（None = 排到末尾）。
+/// 直接返回调整后的整棵树，前端一次拿到新顺序与新路径。
+#[tauri::command]
+pub fn move_group(
+    state: State<'_, AppState>,
+    id: i64,
+    parent_id: Option<i64>,
+    before_id: Option<i64>,
+) -> AppResult<Vec<GroupDto>> {
+    let conn = state.conn()?;
+    groups::move_to(&conn, id, parent_id, before_id)?;
+    groups::list(&conn)
+}
+
 // ---------- 词条 ----------
 
 /// deep = true 时包含所有子分组的词条（打印整册用）

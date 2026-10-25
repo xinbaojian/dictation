@@ -42,6 +42,7 @@ pub fn run() {
             commands::library::create_group,
             commands::library::update_group,
             commands::library::delete_group,
+            commands::library::move_group,
             commands::library::list_words,
             commands::library::add_word,
             commands::library::update_word,

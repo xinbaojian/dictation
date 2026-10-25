@@ -24,6 +24,9 @@ export const api = {
   updateGroup: (id: number, code: string, name: string) =>
     invoke<Group>("update_group", { id, code, name }),
   deleteGroup: (id: number) => invoke<GroupDeleteResult>("delete_group", { id }),
+  /** 拖动调整结构：移到 parentId 下、插在 beforeId 之前（null = 排到末尾），返回新的整棵树 */
+  moveGroup: (id: number, parentId: number | null, beforeId: number | null) =>
+    invoke<Group[]>("move_group", { id, parentId, beforeId }),
   listWords: (groupId: number, deep = false) => invoke<Word[]>("list_words", { groupId, deep }),
   addWord: (groupId: number, text: string, note: string | null) =>
     invoke<Word>("add_word", { groupId, text, note }),

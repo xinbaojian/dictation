@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
 import ConfirmModal from "../components/ConfirmModal";
 import GroupModal from "../components/GroupModal";
 import PasteImportModal from "../components/PasteImportModal";
@@ -6,6 +6,9 @@ import { api, errorMessage, practiceLabel } from "../lib/ipc";
 import type { Group, Word, WordStatus } from "../types";
 
 type Notice = { kind: "ok" | "error"; text: string };
+
+/** 拖动落点：落在行的上沿 = 排到前面，下沿 = 排到后面，中间 = 变成子分组 */
+type DropPos = "before" | "after" | "inside";
 
 const STATUS_STYLE: Record<WordStatus, { label: string; cls: string }> = {
   new: { label: "未练", cls: "bg-stone-100 text-stone-500" },
@@ -22,6 +25,9 @@ export default function Wordbook({ onPrint }: WordbookProps) {
   const [words, setWords] = useState<Word[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [dropHint, setDropHint] = useState<{ id: number; pos: DropPos } | null>(null);
+  const [rootHint, setRootHint] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<Notice | null>(null);
 
@@ -126,6 +132,87 @@ export default function Wordbook({ onPrint }: WordbookProps) {
       else next.add(id);
       return next;
     });
+  };
+
+  // ---------- 拖动调整分组结构 ----------
+
+  /** node 是否落在 ancestor 这棵子树里（含自己），用来挡住「拖进自己的子孙」 */
+  const inSubtree = (node: number, ancestor: number) => {
+    let cursor: number | null = node;
+    for (let guard = 0; cursor != null && guard < 64; guard += 1) {
+      if (cursor === ancestor) return true;
+      cursor = groups.find((g) => g.id === cursor)?.parentId ?? null;
+    }
+    return false;
+  };
+
+  /** 算出某个落点对应的「新父级 + 排在谁前面」，非法落点返回 null */
+  const targetFor = (g: Group, pos: DropPos): { parentId: number | null; beforeId: number | null } | null => {
+    if (dragId == null || g.id === dragId) return null;
+    if (pos === "inside") {
+      return inSubtree(g.id, dragId) ? null : { parentId: g.id, beforeId: null };
+    }
+    const parentId = g.parentId;
+    if (parentId != null && inSubtree(parentId, dragId)) return null;
+    if (pos === "before") return { parentId, beforeId: g.id };
+    const siblings = groups.filter((x) => x.parentId === parentId);
+    const next = siblings[siblings.findIndex((x) => x.id === g.id) + 1];
+    return { parentId, beforeId: next ? next.id : null };
+  };
+
+  const zoneOf = (e: DragEvent<HTMLDivElement>): DropPos => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0.5;
+    if (ratio < 0.3) return "before";
+    if (ratio > 0.7) return "after";
+    return "inside";
+  };
+
+  const endDrag = () => {
+    setDragId(null);
+    setDropHint(null);
+    setRootHint(false);
+  };
+
+  const onRowDragOver = (e: DragEvent<HTMLDivElement>, g: Group) => {
+    if (dragId == null) return;
+    const pos = zoneOf(e);
+    if (!targetFor(g, pos)) {
+      if (dropHint) setDropHint(null);
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setRootHint(false);
+    if (!dropHint || dropHint.id !== g.id || dropHint.pos !== pos) setDropHint({ id: g.id, pos });
+  };
+
+  const onRowDrop = (e: DragEvent<HTMLDivElement>, g: Group) => {
+    const id = dragId;
+    if (id == null) return;
+    const target = targetFor(g, zoneOf(e));
+    if (!target) return;
+    e.preventDefault();
+    void applyMove(id, target.parentId, target.beforeId);
+  };
+
+  const applyMove = async (id: number, parentId: number | null, beforeId: number | null) => {
+    endDrag();
+    try {
+      const list = await api.moveGroup(id, parentId, beforeId);
+      setGroups(list);
+      if (parentId != null) {
+        // 拖进折叠着的分组时自动展开，否则看起来像「词条消失了」
+        setCollapsed((prev) => {
+          if (!prev.has(parentId)) return prev;
+          const next = new Set(prev);
+          next.delete(parentId);
+          return next;
+        });
+      }
+    } catch (e) {
+      notify("error", errorMessage(e));
+    }
   };
 
   const saveGroup = async (code: string, name: string) => {
@@ -258,7 +345,15 @@ export default function Wordbook({ onPrint }: WordbookProps) {
           <h1 className="text-sm font-semibold text-stone-800">词语表</h1>
           <span className="text-xs text-stone-400">{groups.length} 组</span>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        <div
+          className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+          onDragOver={(e) => {
+            // 拖到空白处（不是某一行）时清掉落点提示
+            if (e.target !== e.currentTarget) return;
+            if (dropHint) setDropHint(null);
+            if (rootHint) setRootHint(false);
+          }}
+        >
           {groups.length === 0 && (
             <p className="px-2 py-6 text-center text-xs leading-relaxed text-stone-400">
               还没有分组
@@ -266,16 +361,39 @@ export default function Wordbook({ onPrint }: WordbookProps) {
               先建一个「二年级上册」
             </p>
           )}
+          {groups.length > 0 && (
+            <p className="px-2 pb-1.5 text-[11px] text-stone-400">拖动分组可调整层级与顺序</p>
+          )}
           {visibleGroups.map((g) => {
             const active = g.id === selectedId;
             const children = groups.filter((x) => x.parentId === g.id).length;
+            const drop = dropHint && dropHint.id === g.id ? dropHint.pos : null;
+            const dragging = dragId === g.id;
             return (
-              <div key={g.id} style={{ paddingLeft: g.depth * 14 }}>
+              <div key={g.id} style={{ paddingLeft: g.depth * 14 }} className="relative">
+                {drop === "before" && (
+                  <span className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0.5 rounded-full bg-amber-500" />
+                )}
                 <div
+                  draggable
+                  title="拖动可调整层级与顺序"
+                  onDragStart={(e) => {
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", String(g.id));
+                    setDragId(g.id);
+                  }}
+                  onDragEnd={endDrag}
+                  onDragOver={(e) => onRowDragOver(e, g)}
+                  onDrop={(e) => onRowDrop(e, g)}
                   onClick={() => setSelectedId(g.id)}
                   className={
-                    "mb-0.5 flex cursor-pointer items-start gap-1 rounded-md py-1.5 pr-2 " +
-                    (active ? "bg-amber-50 ring-1 ring-amber-200" : "hover:bg-stone-50")
+                    "mb-0.5 flex cursor-grab items-start gap-1 rounded-md py-1.5 pr-2 active:cursor-grabbing " +
+                    (drop === "inside"
+                      ? "bg-amber-100 ring-2 ring-amber-400"
+                      : active
+                        ? "bg-amber-50 ring-1 ring-amber-200"
+                        : "hover:bg-stone-50") +
+                    (dragging ? " opacity-40" : "")
                   }
                 >
                   {children > 0 ? (
@@ -313,11 +431,40 @@ export default function Wordbook({ onPrint }: WordbookProps) {
                     </span>
                   </span>
                 </div>
+                {drop === "after" && (
+                  <span className="pointer-events-none absolute inset-x-2 bottom-0 z-10 h-0.5 rounded-full bg-amber-500" />
+                )}
               </div>
             );
           })}
         </div>
         <div className="space-y-1 border-t border-stone-100 p-2">
+          {dragId != null && (
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                if (dropHint) setDropHint(null);
+                setRootHint(true);
+              }}
+              onDragLeave={(e) => {
+                // 移到子节点上也会触发 dragleave，只有真正离开时才清掉
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setRootHint(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                void applyMove(dragId, null, null);
+              }}
+              className={
+                "w-full rounded-md border border-dashed px-2 py-1.5 text-center text-[11px] " +
+                (rootHint
+                  ? "border-amber-400 bg-amber-50 text-amber-700"
+                  : "border-stone-200 text-stone-400")
+              }
+            >
+              拖到这里 → 移到最外层
+            </div>
+          )}
           <button
             onClick={() => setGroupModal({ mode: "create", parent: null })}
             className="w-full rounded-md border border-dashed border-stone-300 py-2 text-sm text-stone-500 hover:border-stone-400 hover:text-stone-700"

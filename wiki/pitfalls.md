@@ -83,3 +83,15 @@ DELETE FROM words WHERE group_id NOT IN (SELECT id FROM groups);
 
 **已修**：`db/mod.rs` 在初始化后写 `.dictation-initialized` 标记，只有「没库 + 没标记」才搬旧数据；库不存在时顺带清理孤立的 `-wal / -shm`。
 后来者注意：任何「自动恢复/自动迁移」都必须是一次性的，别留一个每次启动都会触发的复活路径。
+
+## 13. Windows 上 HTML5 拖放要先关掉 Tauri 的文件拖放
+
+Tauri 在 Windows 默认接管 webview 的拖放事件（用来做「把文件拖进窗口」），前端 `draggable` 的 `dragstart / dragover / drop` 一个都不会触发，表现是「拖不动、没反应、也不报错」。
+
+**做法**：`tauri.conf.json` 的窗口配置里加 `"dragDropEnabled": false`（词表左侧树的拖动调整就靠它）。
+代价是失去了「拖文件进窗口」的能力——本应用不需要（导入走粘贴和备份弹窗）。
+
+顺带两条拖放本身的坑：
+
+- `dragover` 里不 `preventDefault()` 就不会有 `drop`，看起来像「松手没反应」
+- `dragleave` 在移到子节点时也会触发，判断「真的离开了」要用 `currentTarget.contains(relatedTarget)`，否则指示器一直闪
