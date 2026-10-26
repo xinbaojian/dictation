@@ -136,11 +136,17 @@ jobs:
             libwebkit2gtk-4.1-dev:i386 libayatana-appindicator3-dev:i386 \
             librsvg2-dev:i386 libgtk-3-dev:i386 libssl-dev:i386
 
-      # arm64 需要开启 arm64 架构、装对应的开发库与交叉链接器
+      # arm64 需要开启 arm64 架构、装对应的开发库与交叉链接器。
+      # GitHub runner 的 apt 源只含 amd64/i386，arm64 必须从 ports.ubuntu.com 拉。
       - name: Install arm64 (aarch64) dependencies + linker
         if: matrix.arch == 'arm64'
         run: |
           sudo dpkg --add-architecture arm64
+          cat <<'EOF' | sudo tee /etc/apt/sources.list.d/arm64.list
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
+          EOF
           sudo apt-get update
           sudo apt-get install -y \
             gcc-aarch64-linux-gnu \
