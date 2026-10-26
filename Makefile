@@ -141,8 +141,8 @@ v%:
 release:
 	@test -n "$(RELEASE_TAG)" || { echo "usage: make release v0.1.0"; exit 1; }
 	@echo "==> bump version -> $(NEW_VERSION)"
-	@perl -i -pe 's/("version"\s*:\s*")[\d.]+\s*(")/$$1$(NEW_VERSION)$$2/' package.json src-tauri/tauri.conf.json
-	@perl -i -pe 's/(^version\s*=\s*")[\d.]+(")/$$1$(NEW_VERSION)$$2/' src-tauri/Cargo.toml
+	@perl -i -pe 's/("version"\s*:\s*")[\d.]+\s*(")/${1}$(NEW_VERSION)${2}/' package.json src-tauri/tauri.conf.json
+	@perl -i -pe 's/(^version\s*=\s*")[\d.]+(")/${1}$(NEW_VERSION)${2}/' src-tauri/Cargo.toml
 	@git diff --stat package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
 	@git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
 	@git commit -m "chore: release $(NEW_VERSION)"
