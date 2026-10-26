@@ -55,7 +55,7 @@ pub fn backup_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("backups")
 }
 
-pub fn create(conn: &Connection, data_dir: &Path) -> AppResult<String> {
+pub fn create(conn: &Connection, data_dir: &Path, dest_dir: Option<&str>) -> AppResult<String> {
     let exported_at: String =
         conn.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now')", [], |r| r.get(0))?;
     let stamp: String =
@@ -99,7 +99,17 @@ pub fn create(conn: &Connection, data_dir: &Path) -> AppResult<String> {
         exported_at,
         groups,
     };
-    let dir = backup_dir(data_dir);
+    // 默认备份到 data_dir/backups；若调用方指定了目录，则写到该目录
+    let dir = match dest_dir {
+        Some(d) if !d.trim().is_empty() => {
+            let p = PathBuf::from(d.trim());
+            if p.exists() && !p.is_dir() {
+                return Err(AppError::msg("指定的备份目录不是一个文件夹"));
+            }
+            p
+        }
+        _ => backup_dir(data_dir),
+    };
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("backup-{stamp}.json"));
     std::fs::write(&path, serde_json::to_string_pretty(&payload)?)?;
@@ -257,7 +267,7 @@ mod tests {
         crate::repo::word_progress::mark_wrong(&source, words::list(&source, g.id).unwrap()[0].id)
             .unwrap();
 
-        let path = create(&source, &dir).unwrap();
+        let path = create(&source, &dir, None).unwrap();
         assert!(Path::new(&path).exists());
         assert_eq!(list(&dir).unwrap().len(), 1);
 
@@ -289,7 +299,7 @@ mod tests {
         let unit = groups::create(&source, Some(book.id), "1", "第一单元").unwrap();
         words::add(&source, unit.id, "春天", None).unwrap();
 
-        let path = create(&source, &dir).unwrap();
+        let path = create(&source, &dir, None).unwrap();
         let target = db::open_memory();
         let summary = import(&target, &path).unwrap();
         assert_eq!(summary.groups_added, 2);

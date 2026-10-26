@@ -63,7 +63,8 @@ export const api = {
   // 设置与备份
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (value: Settings) => invoke<Settings>("save_settings", { value }),
-  createBackup: () => invoke<string>("create_backup"),
+  createBackup: (destDir?: string | null) =>
+    invoke<string>("create_backup", { destDir: destDir ?? null }),
   listBackups: () => invoke<BackupInfo[]>("list_backups"),
   importBackup: (path: string) => invoke<ImportSummary>("import_backup", { path }),
   openDataDir: () => invoke<void>("open_data_dir"),

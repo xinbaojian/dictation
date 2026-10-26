@@ -24,8 +24,19 @@ pub fn init(app: &AppHandle) -> AppResult<(Connection, PathBuf)> {
     if !db_path.exists() {
         // 库被删掉了但 WAL 还留着时，SQLite 可能把旧页恢复出来，先清掉
         remove_sidecars(&db_path);
-        if should_adopt(&db_path, &marker, &legacy_dir.join("dictation.db")) {
-            adopt_legacy(&legacy_dir.join("dictation.db"), &db_path)?;
+        // 迁移来源：① 旧版用户数据目录；②（macOS）旧版放在 .app 包内的库。
+        // 按序尝试，找到第一个存在的就搬过来。
+        let mut sources: Vec<PathBuf> = vec![legacy_dir.join("dictation.db")];
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                sources.push(exe_dir.join("dictation.db"));
+            }
+        }
+        for src in sources {
+            if should_adopt(&db_path, &marker, &src) {
+                adopt_legacy(&src, &db_path)?;
+                break;
+            }
         }
     }
 
@@ -57,18 +68,31 @@ fn remove_sidecars(db: &Path) {
 
 /// 数据目录优先用「程序同级目录」，做到绿色便携：拷走整个文件夹就能换电脑。
 /// 目录不可写（例如装在 Program Files）时回落到用户数据目录。
+///
+/// macOS 例外：.app 包在更新时会被整体替换，绝不能把数据放在包内的可执行文件
+/// 旁边（Dictation.app/Contents/MacOS），否则一升级数据就没了。macOS 一律用
+/// 用户数据目录（~/Library/Application Support/com.dictation.app）。
 fn resolve_dir(fallback: &Path) -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            if is_writable(dir) {
-                return dir.to_path_buf();
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::fs::create_dir_all(fallback);
+        return fallback.to_path_buf();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                if is_writable(dir) {
+                    return dir.to_path_buf();
+                }
             }
         }
+        let _ = std::fs::create_dir_all(fallback);
+        fallback.to_path_buf()
     }
-    let _ = std::fs::create_dir_all(fallback);
-    fallback.to_path_buf()
 }
 
+#[cfg(not(target_os = "macos"))]
 fn is_writable(dir: &Path) -> bool {
     let probe = dir.join(".dictation-write-test");
     match std::fs::write(&probe, b"1") {

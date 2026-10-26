@@ -28,6 +28,7 @@ impl AppState {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let (conn, data_dir) = db::init(app.handle())?;
             app.manage(AppState {

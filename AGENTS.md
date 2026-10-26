@@ -10,22 +10,28 @@
 - React 18 + TypeScript + Vite + Tailwind CSS 4
 - 无网络、无账号、无云端，数据只在本机 SQLite
 
+## 沟通交流
+
+- 使用中文
+
 ## 命令
 
 ```bash
 npm install
-make                       # 打包 + 部署到 D:/StudyApp/dictation
+make                       # 打包 + 部署（Windows 默认 D:/StudyApp/dictation，macOS 默认 ~/Applications）
+make dmg                   # macOS：只出 .dmg 安装包（等价于 make build）
 npm run tauri dev          # 开发运行（Vite 1420 + Rust）
 npm run typecheck          # 前端类型检查（tsc --noEmit）
 npm run build              # 前端构建（typecheck + vite build）
 cd src-tauri && cargo test # 后端单测，当前 56 个
 cd src-tauri && cargo build
-npm run tauri build        # 出 NSIS 安装包
+npm run tauri build        # 出安装包（Windows=NSIS，macOS=DMG，由 Makefile 的 --bundles 控制）
 ```
 
-产物：`src-tauri/target/release/bundle/nsis/Dictation_0.1.0_x64-setup.exe`
+产物（Windows）：`src-tauri/target/release/bundle/nsis/Dictation_0.1.0_x64-setup.exe`
+产物（macOS）：`src-tauri/target/release/bundle/dmg/Dictation_0.1.0_aarch64.dmg`（`make install` 会把它拷到 `~/Applications/Dictation.app`；要装到 `/Applications` 用 `make install INSTALL_DIR=/Applications`，需 sudo）
 
-`make` 在 Git Bash / PowerShell / cmd 里都能跑：Makefile 顶部按 `OS` 环境变量把 Git 自带的 bash 指给 `SHELL`。**别删这段**——Windows 版 make 不认 `/bin/bash`，会静默退回 cmd，`mkdir -p` 会在仓库里建出一个叫 `-p` 的目录（见 wiki/pitfalls.md 第 14 条）。
+`make` 在 Git Bash / PowerShell / cmd 里都能跑：Makefile 顶部按 `OS` 环境变量把 Git 自带的 bash 指给 `SHELL`（仅 Windows 分支设置）。**别删这段**——Windows 版 make 不认 `/bin/bash`，会静默退回 cmd，`mkdir -p` 会在仓库里建出一个叫 `-p` 的目录（见 wiki/pitfalls.md 第 14 条）。macOS / Linux 用系统默认 shell，无需该段。
 
 ## 目录
 
@@ -48,6 +54,7 @@ src/lib/ipc.ts          全部后端调用集中于此，类型来自 src/types.
 4. **拼音字段不存在**，不要顺手加回来（产品已排除）。导入解析也不处理拼音。
 5. **分组是树**（`groups.parent_id`）：选父分组就等于选它全部子孙，抽题/打印/统计都靠 `sampler::expand_group_ids` 展开；别在别处再写一套遍历。拖动改结构只走 `repo/groups.rs::move_to`（换父级 + 同级 `sort_order` 重排 + 数字编号重排，一个事务）。
 6. **前端不拼 SQL、不绕过 `src/lib/ipc.ts`**。新增后端能力 = 加命令 + 加 ipc 方法 + 加类型。
+7. **数据目录位置**：Windows / Linux 优先放「可执行文件同级目录」（绿色便携，拷走文件夹即可换电脑）；**macOS 一律放 `~/Library/Application Support/com.dictation.app`**——`.app` 包更新时会被整体替换，放包内（`Dictation.app/Contents/MacOS`）会随更新丢数据。`src-tauri/src/db/mod.rs::resolve_dir` 已用 `cfg(target_os = "macos")` 隔离，别改回「放 exe 同级」。
 
 ## 代码约定
 

@@ -17,9 +17,9 @@ pub fn save_settings(state: State<'_, AppState>, value: SettingsDto) -> AppResul
 }
 
 #[tauri::command]
-pub fn create_backup(state: State<'_, AppState>) -> AppResult<String> {
+pub fn create_backup(state: State<'_, AppState>, dest_dir: Option<String>) -> AppResult<String> {
     let conn = state.conn()?;
-    backup::create(&conn, &state.data_dir)
+    backup::create(&conn, &state.data_dir, dest_dir.as_deref())
 }
 
 #[tauri::command]
@@ -36,7 +36,17 @@ pub fn import_backup(state: State<'_, AppState>, path: String) -> AppResult<Impo
 #[tauri::command]
 pub fn open_data_dir(state: State<'_, AppState>) -> AppResult<()> {
     let dir = state.data_dir.clone();
-    std::process::Command::new("explorer")
+    // 目录一般在初始化时即创建，这里兜底一下（用户运行中手动删掉后点开）
+    std::fs::create_dir_all(&dir)?;
+    // 各平台打开文件夹的命令不同：Windows=explorer，macOS=open，Linux=xdg-open
+    let opener = if cfg!(target_os = "windows") {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(opener)
         .arg(&dir)
         .spawn()
         .map_err(|e| AppError::msg(format!("无法打开数据目录：{e}")))?;

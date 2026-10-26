@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import ConfirmModal from "../components/ConfirmModal";
 import { Toast, useNotice } from "../components/Toast";
+import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorMessage } from "../lib/ipc";
 import type { BackupInfo, Settings as SettingsType } from "../types";
 
@@ -23,7 +24,8 @@ export default function Settings() {
   const [value, setValue] = useState<SettingsType | null>(null);
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [dataDir, setDataDir] = useState("");
-  const [importing, setImporting] = useState<BackupInfo | null>(null);
+  const [backupDir, setBackupDir] = useState("");
+  const [importing, setImporting] = useState<{ name: string; path: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const { notice, notify } = useNotice();
 
@@ -60,9 +62,33 @@ export default function Settings() {
 
   const backup = async () => {
     try {
-      const path = await api.createBackup();
+      const path = await api.createBackup(backupDir || null);
       setBackups(await api.listBackups());
       notify("ok", "已导出：" + path);
+    } catch (e) {
+      notify("error", errorMessage(e));
+    }
+  };
+
+  const pickBackupDir = async () => {
+    try {
+      const d = await open({ directory: true, title: "选择备份保存目录" });
+      if (typeof d === "string") setBackupDir(d);
+    } catch (e) {
+      notify("error", errorMessage(e));
+    }
+  };
+
+  const pickImportFile = async () => {
+    try {
+      const p = await open({
+        multiple: false,
+        filters: [{ name: "备份文件", extensions: ["json"] }],
+      });
+      if (typeof p === "string") {
+        const name = p.split(/[\\/]/).pop() || p;
+        setImporting({ name, path: p });
+      }
     } catch (e) {
       notify("error", errorMessage(e));
     }
@@ -227,7 +253,38 @@ export default function Settings() {
             {dataDir}
           </p>
 
-          <div className="mt-3">
+          <div className="mt-3 flex items-center gap-2">
+            <span className="shrink-0 text-xs text-stone-500">备份保存目录</span>
+            <code className="min-w-0 flex-1 truncate rounded bg-stone-50 px-2 py-1 font-mono text-[11px] text-stone-500">
+              {backupDir || (dataDir ? dataDir + "/backups" : "（默认备份目录）")}
+            </code>
+            <button
+              onClick={pickBackupDir}
+              className="shrink-0 rounded border border-stone-200 px-2 py-1 text-xs text-stone-600 hover:bg-stone-50"
+            >
+              选择…
+            </button>
+            {backupDir && (
+              <button
+                onClick={() => setBackupDir("")}
+                className="shrink-0 rounded px-2 py-1 text-xs text-stone-400 hover:bg-stone-100"
+              >
+                默认
+              </button>
+            )}
+          </div>
+
+          <div className="mt-4 flex items-center justify-between">
+            <span className="text-xs font-medium text-stone-600">已有备份</span>
+            <button
+              onClick={pickImportFile}
+              className="rounded border border-stone-200 px-2 py-1 text-xs text-stone-600 hover:bg-stone-50"
+            >
+              从文件导入…
+            </button>
+          </div>
+
+          <div className="mt-2">
             {backups.length === 0 ? (
               <p className="text-xs text-stone-400">还没有备份文件</p>
             ) : (
@@ -239,7 +296,7 @@ export default function Settings() {
                       <p className="text-xs text-stone-400">{Math.max(1, Math.round(b.size / 1024))} KB</p>
                     </div>
                     <button
-                      onClick={() => setImporting(b)}
+                      onClick={() => setImporting({ name: b.name, path: b.path })}
                       className="shrink-0 rounded px-2 py-1 text-xs text-stone-500 hover:bg-stone-100"
                     >
                       导入
