@@ -3,7 +3,7 @@ name: Release
 # 打 tag（形如 v0.1.0）推到 GitHub 时，自动构建并发布所有平台的安装包：
 #   Windows：NSIS .exe（x64 / x86-32位 / arm64）
 #   macOS  ：universal .dmg（x64 + arm64；Apple 已不支持 32 位，故无 32 位包）
-#   Linux  ：.deb + AppImage 通用包（x86_64 / i686-32位 / aarch64）
+#   Linux  ：.deb + AppImage 通用包（x86_64 / aarch64；32 位 Linux 因系统已无 i386 桌面库，无法构建）
 on:
   push:
     tags:
@@ -96,62 +96,30 @@ jobs:
           name: macos
           path: src-tauri/target/universal-apple-darwin/release/bundle/**
 
-  # ---------- Linux：.deb + AppImage（x86_64 / i686 / aarch64） ----------
+  # ---------- Linux：.deb + AppImage（x86_64 原生 / aarch64 原生 ARM runner） ----------
+  # 说明：Ubuntu 22.04 起已裁撤 i386 桌面库（webkit2gtk / gtk 无 32 位开发包），
+  # 无法构建 32 位 Linux 包；32 位覆盖由 Windows i686 提供。
   build-linux:
     name: Linux (${{ matrix.target }})
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            arch: amd64
-          - target: i686-unknown-linux-gnu
-            arch: i386
-            linker: i686-linux-gnu-gcc
-            cargo_env: I686_UNKNOWN_LINUX_GNU
+            os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
-            arch: arm64
-            linker: aarch64-linux-gnu-gcc
-            cargo_env: AARCH64_UNKNOWN_LINUX_GNU
+            os: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install base Tauri dependencies
+      - name: Install Tauri system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev build-essential curl wget file \
             libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
-
-      # 32 位（i686）需要开启 i386 架构并装对应的 32 位开发库
-      - name: Install 32-bit (i386) dependencies
-        if: matrix.arch == 'i386'
-        run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc-multilib g++-multilib gcc-i686-linux-gnu g++-i686-linux-gnu \
-            libwebkit2gtk-4.1-dev:i386 libayatana-appindicator3-dev:i386 \
-            librsvg2-dev:i386 libgtk-3-dev:i386 libssl-dev:i386
-
-      # arm64 需要开启 arm64 架构、装对应的开发库与交叉链接器。
-      # GitHub runner 的 apt 源只含 amd64/i386，arm64 必须从 ports.ubuntu.com 拉。
-      - name: Install arm64 (aarch64) dependencies + linker
-        if: matrix.arch == 'arm64'
-        run: |
-          sudo dpkg --add-architecture arm64
-          cat <<'EOF' | sudo tee /etc/apt/sources.list.d/arm64.list
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
-          EOF
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc-aarch64-linux-gnu \
-            libwebkit2gtk-4.1-dev:arm64 libayatana-appindicator3-dev:arm64 \
-            librsvg2-dev:arm64 libgtk-3-dev:arm64 libssl-dev:arm64
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -167,10 +135,6 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-
-      - name: Set cross linker (non-native arch)
-        if: matrix.arch != 'amd64'
-        run: echo "CARGO_TARGET_${{ matrix.cargo_env }}_LINKER=${{ matrix.linker }}" >> "$GITHUB_ENV"
 
       - name: Install frontend deps
         run: npm install
