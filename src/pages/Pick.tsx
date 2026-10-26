@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import ConfirmModal from "../components/ConfirmModal";
 import { Toast, useNotice } from "../components/Toast";
 import { api, errorMessage, formatTime } from "../lib/ipc";
 import type { Group, Scope, Session } from "../types";
@@ -28,6 +29,8 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
   const [active, setActive] = useState<Session | null>(null);
   const [chainByChar, setChainByChar] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** 有未完成的会话时点「开始默写」，先弹窗问是继续还是放弃重开 */
+  const [askingRestart, setAskingRestart] = useState(false);
   const [loading, setLoading] = useState(true);
   const { notice, notify } = useNotice();
 
@@ -138,7 +141,7 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
     );
   };
 
-  const start = async () => {
+  const createAndGo = async () => {
     if (busy || count === 0) return;
     setBusy(true);
     try {
@@ -147,6 +150,28 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
     } catch (e) {
       notify("error", errorMessage(e));
       setBusy(false);
+    }
+  };
+
+  // 有没做完的默写时不直接新建，否则它会变成「另一场」，上一场的词又会抽一遍
+  const start = () => {
+    if (busy || count === 0) return;
+    if (active) {
+      setAskingRestart(true);
+      return;
+    }
+    void createAndGo();
+  };
+
+  const restart = async () => {
+    if (!active || busy) return;
+    try {
+      await api.abandonSession(active.id);
+      setActive(null);
+      setAskingRestart(false);
+      await createAndGo();
+    } catch (e) {
+      notify("error", errorMessage(e));
     }
   };
 
@@ -356,6 +381,25 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
           </button>
         </div>
       </div>
+      {askingRestart && active && (
+        <ConfirmModal
+          title={active.status === "running" ? "上次默写还没做完" : "上次默写还没批改"}
+          body={
+            `「${active.groupLabel}」那场共 ${active.total} 个词。重开一场会放弃它，` +
+            "刚默写过的词不会再抽到；想接着做完就点「继续」。"
+          }
+          confirmText="放弃并重开"
+          cancelText="取消"
+          extraText={active.status === "running" ? "继续默写" : "去批改"}
+          onExtra={() => {
+            setAskingRestart(false);
+            if (active.status === "running") onStart(active.id);
+            else onReview(active.id);
+          }}
+          onCancel={() => setAskingRestart(false)}
+          onConfirm={() => void restart()}
+        />
+      )}
       <Toast notice={notice} />
     </div>
   );

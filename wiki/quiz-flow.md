@@ -1,6 +1,6 @@
 ---
 title: 默写流程与状态流转
-updated: 2026-10-25
+updated: 2026-10-26
 tags: [flow, domain]
 related: [data-model.md, decisions.md]
 ---
@@ -19,6 +19,10 @@ related: [data-model.md, decisions.md]
 
 ## 二、建会话（`repo/sessions.rs::create`）
 
+- 候选池走 `candidates_for_new_session`：按范围收词后，再排除**最近一场**（`finished` / `reviewing` / `abandoned`）出现过的词语**文本**（不是 word_id——同一个词分在两个组是两条记录，按 text 才算真去重）；排除完为空则回退成不排除，词池太小也要能开局
+- 错题本范围（`mistake`）不排除：上次错的词正是这次要练的
+- `count_candidates` 走同一个函数，保证「可抽 N 词」和实际抽到的数一致
+- 前端：有未完成会话时点「开始默写」会弹 `ConfirmModal`（继续 / 放弃并重开 / 取消），不再静默新建第二场，避免上一场刚写的词又抽一遍
 - 写入 `sessions`（`status='running'`，`config_json` 快照）+ 逐条写 `session_items`（`seq` 从 1 递增）
 - 事务内完成，前端拿到的是完整 `SessionDto`（含 items），可以直接进默写页
 
@@ -66,3 +70,4 @@ related: [data-model.md, decisions.md]
 
 - 词条从错题本出本后，选「全部词」仍会抽到（期末复习需要）
 - 跨组去重的副作用：同一词在 A、B 两组的进度互相独立，抽到的那条被练，另一条保持 `new`。分组统计的「未掌握」可能略高于实际
+- 上一场默写过的词，下一场会被跳过（只跳一场，不是永久）；想连续练同一批词就等词池轮完，或直接在错题本里练

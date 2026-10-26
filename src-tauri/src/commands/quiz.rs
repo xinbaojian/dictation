@@ -1,4 +1,4 @@
-use crate::domain::sampler::{self, Scope};
+use crate::domain::sampler::Scope;
 use crate::error::AppResult;
 use crate::repo::sessions::{self, ReviewResult, SessionDto, SessionSummaryDto, WrongMark};
 use crate::repo::words::{self, MistakeDto};
@@ -14,7 +14,8 @@ pub fn count_candidates(
 ) -> AppResult<i64> {
     let conn = state.conn()?;
     let scope = Scope::parse(&scope)?;
-    Ok(sampler::collect(&conn, &group_ids, scope)?.len() as i64)
+    // 与真正开局用同一个候选池，避免预览数和实际抽到的数不一致
+    Ok(sessions::candidates_for_new_session(&conn, &group_ids, scope)?.len() as i64)
 }
 
 #[tauri::command]

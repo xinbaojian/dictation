@@ -1,4 +1,4 @@
-use crate::domain::sampler::{self, Scope};
+use crate::domain::sampler::{self, Candidate, Scope};
 use crate::domain::text::{format_char_indices, parse_char_indices};
 use crate::error::{AppError, AppResult};
 use crate::repo::{settings, word_progress};
@@ -109,7 +109,7 @@ pub fn create(
     limit: i64,
     shuffle: bool,
 ) -> AppResult<i64> {
-    let mut candidates = super::super::domain::sampler::collect(conn, group_ids, scope)?;
+    let mut candidates = candidates_for_new_session(conn, group_ids, scope)?;
     if candidates.is_empty() {
         return Err(AppError::msg(scope_empty_hint(scope)));
     }
@@ -137,6 +137,53 @@ pub fn create(
     };
     let mode = if scope == Scope::Mistake { "mistake" } else { "group" };
     insert(conn, mode, &config, &word_ids)
+}
+
+/// 新一轮抽题的候选池：按范围收词后，再排除「最近一场」已经默写过的词。
+///
+/// 排除按**词语文本**而不是 word_id：同一个词写在两个分组里是两条记录，
+/// 上一场抽到 A 组的「春天」，这一场抽到 B 组的「春天」其实还是同一个词。
+///
+/// 排除完一个都不剩就放弃排除——词池太小，宁可重复也不能开不了局。
+/// 错题本模式不排除：上次错的词正是这次要练的。
+pub fn candidates_for_new_session(
+    conn: &Connection,
+    group_ids: &[i64],
+    scope: Scope,
+) -> AppResult<Vec<Candidate>> {
+    let all = sampler::collect(conn, group_ids, scope)?;
+    if scope == Scope::Mistake {
+        return Ok(all);
+    }
+    let practiced = last_practiced_texts(conn)?;
+    if practiced.is_empty() {
+        return Ok(all);
+    }
+    let fresh: Vec<Candidate> = all
+        .iter()
+        .filter(|c| !practiced.contains(&c.text))
+        .cloned()
+        .collect();
+    if fresh.is_empty() {
+        return Ok(all);
+    }
+    Ok(fresh)
+}
+
+/// 最近一场（已批改 / 待批改 / 已放弃）默写出现过的词语文本
+fn last_practiced_texts(conn: &Connection) -> AppResult<HashSet<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT w.text
+         FROM session_items i
+         JOIN words w ON w.id = i.word_id
+         WHERE i.session_id = (
+             SELECT id FROM sessions
+             WHERE status IN ('finished','reviewing','abandoned')
+             ORDER BY id DESC LIMIT 1
+         )",
+    )?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    Ok(rows.collect::<Result<HashSet<_>, _>>()?)
 }
 
 fn scope_empty_hint(scope: Scope) -> &'static str {
@@ -552,6 +599,73 @@ mod tests {
         assert_eq!(retried.total, 2);
         assert_eq!(retried.mode, "mistake");
         assert_eq!(retried.group_label, "错题本");
+    }
+
+    #[test]
+    fn new_round_skips_words_from_last_session() {
+        let conn = db::open_memory();
+        let g = groups::create(&conn, None, "1", "第一单元").unwrap();
+        for w in ["春天", "夏天", "秋天", "冬天"] {
+            words::add(&conn, g.id, w, None).unwrap();
+        }
+
+        let first = create(&conn, &[g.id], Scope::All, 2, false).unwrap();
+        let done: Vec<String> = get(&conn, first).unwrap().items.into_iter().map(|i| i.text).collect();
+        finish_quiz(&conn, first).unwrap();
+        submit_review(&conn, first, &[]).unwrap();
+
+        let second = create(&conn, &[g.id], Scope::All, 0, false).unwrap();
+        let rest: Vec<String> = get(&conn, second).unwrap().items.into_iter().map(|i| i.text).collect();
+        assert_eq!(rest.len(), 2, "只剩没默写过的两个词");
+        for text in &done {
+            assert!(!rest.contains(text), "上一场默写过的「{text}」不该再出现");
+        }
+    }
+
+    #[test]
+    fn new_round_falls_back_when_everything_was_practiced() {
+        let (conn, gid) = seed();
+        let first = create(&conn, &[gid], Scope::All, 0, false).unwrap();
+        finish_quiz(&conn, first).unwrap();
+        submit_review(&conn, first, &[]).unwrap();
+
+        let second = create(&conn, &[gid], Scope::All, 0, false).unwrap();
+        assert_eq!(get(&conn, second).unwrap().total, 3, "全练过时回退成不排除，不能开不了局");
+    }
+
+    #[test]
+    fn new_round_excludes_by_text_across_groups() {
+        let conn = db::open_memory();
+        let g1 = groups::create(&conn, None, "1", "第一单元").unwrap();
+        let g2 = groups::create(&conn, None, "2", "第二单元").unwrap();
+        words::add(&conn, g1.id, "春天", None).unwrap();
+        words::add(&conn, g1.id, "夏天", None).unwrap();
+        words::add(&conn, g2.id, "春天", None).unwrap();
+        words::add(&conn, g2.id, "秋天", None).unwrap();
+
+        // 第一场只抽 g1，两个词都默写过
+        let first = create(&conn, &[g1.id], Scope::All, 0, false).unwrap();
+        finish_quiz(&conn, first).unwrap();
+        submit_review(&conn, first, &[]).unwrap();
+
+        // 第二场把两个组都选上：g2 的那条「春天」是同一个词，同样要排除
+        let second = create(&conn, &[g1.id, g2.id], Scope::All, 0, false).unwrap();
+        let texts: Vec<String> = get(&conn, second).unwrap().items.into_iter().map(|i| i.text).collect();
+        assert_eq!(texts, vec!["秋天"]);
+    }
+
+    #[test]
+    fn mistake_mode_does_not_skip_last_session() {
+        let (conn, gid) = seed();
+        let first = create(&conn, &[gid], Scope::All, 0, false).unwrap();
+        let s = get(&conn, first).unwrap();
+        finish_quiz(&conn, first).unwrap();
+        submit_review(&conn, first, &marks(&[s.items[0].id])).unwrap();
+
+        let second = create(&conn, &[], Scope::Mistake, 0, true).unwrap();
+        let after = get(&conn, second).unwrap();
+        assert_eq!(after.total, 1, "错题本里上次错的词不能被排除");
+        assert_eq!(after.items[0].text, s.items[0].text);
     }
 
     #[test]
