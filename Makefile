@@ -77,7 +77,7 @@ endif
 
 .DEFAULT_GOAL := install
 
-.PHONY: install deploy build dmg test typecheck dev clean help
+.PHONY: install deploy build dmg test typecheck dev clean help release
 
 install deploy: build
 	@mkdir -p "$(INSTALL_DIR)"
@@ -125,3 +125,28 @@ clean:
 
 help:
 	@head -14 Makefile | sed 's/^# \{0,1\}//'
+
+# ---- 解析 `make release vX.Y.Z` 中的版本号 ----
+# MAKECMDGOALS 形如 "release v0.1.0"；取出 v 开头的 token，去掉 v 得到纯版本号
+ifeq (release,$(firstword $(MAKECMDGOALS)))
+  RELEASE_TAG   := $(filter v%,$(MAKECMDGOALS))
+  NEW_VERSION   := $(patsubst v%,%,$(RELEASE_TAG))
+endif
+
+# 让 `make release v0.1.0` 里的 v0.1.0 作为目标时不报错（空操作）
+v%:
+	@true
+
+# 一键发版：改三处版本号 -> 提交 -> 打 tag -> 推送（触发 GitHub Actions 自动打包发布）
+release:
+	@test -n "$(RELEASE_TAG)" || { echo "usage: make release v0.1.0"; exit 1; }
+	@echo "==> bump version -> $(NEW_VERSION)"
+	@perl -i -pe 's/("version"\s*:\s*")[\d.]+\s*(")/$$1$(NEW_VERSION)$$2/' package.json src-tauri/tauri.conf.json
+	@perl -i -pe 's/(^version\s*=\s*")[\d.]+(")/$$1$(NEW_VERSION)$$2/' src-tauri/Cargo.toml
+	@git diff --stat package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
+	@git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
+	@git commit -m "chore: release $(NEW_VERSION)"
+	@git tag $(RELEASE_TAG)
+	@git push -u origin $$(git rev-parse --abbrev-ref HEAD)
+	@git push origin $(RELEASE_TAG)
+	@echo "==> pushed tag $(RELEASE_TAG); GitHub Actions will build Windows .exe + macOS .dmg and publish the release"
