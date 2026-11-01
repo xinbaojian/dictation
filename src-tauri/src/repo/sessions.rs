@@ -109,10 +109,16 @@ pub fn create(
     limit: i64,
     shuffle: bool,
 ) -> AppResult<i64> {
-    let mut candidates = candidates_for_new_session(conn, group_ids, scope)?;
+    let mut candidates = sampler::collect(conn, group_ids, scope)?;
     if candidates.is_empty() {
         return Err(AppError::msg(scope_empty_hint(scope)));
     }
+    // 错题本模式不排除上次的错词：上次错的正是这次要练的
+    let practiced = if scope == Scope::Mistake {
+        HashSet::new()
+    } else {
+        last_practiced_texts(conn)?
+    };
     if shuffle {
         let mut rng = rand::thread_rng();
         candidates = if settings::load(conn)?.chain_by_char {
@@ -123,6 +129,9 @@ pub fn create(
             candidates
         };
     }
+    // 上一场刚默写过的词只往后排，不从池子里删：删掉会让「题量 20」在 20 个词的分组里
+    // 只抽出 10 个，看起来像题量没生效；词不够时宁可重复也要凑够用户选的题量。
+    let mut candidates = fresh_first(candidates, &practiced);
     if limit > 0 {
         candidates.truncate(limit as usize);
     }
@@ -139,35 +148,19 @@ pub fn create(
     insert(conn, mode, &config, &word_ids)
 }
 
-/// 新一轮抽题的候选池：按范围收词后，再排除「最近一场」已经默写过的词。
+/// 把「最近一场」已经默写过的词挪到后面，保留在池子里。
 ///
-/// 排除按**词语文本**而不是 word_id：同一个词写在两个分组里是两条记录，
+/// 匹配按**词语文本**而不是 word_id：同一个词写在两个分组里是两条记录，
 /// 上一场抽到 A 组的「春天」，这一场抽到 B 组的「春天」其实还是同一个词。
 ///
-/// 排除完一个都不剩就放弃排除——词池太小，宁可重复也不能开不了局。
-/// 错题本模式不排除：上次错的词正是这次要练的。
-pub fn candidates_for_new_session(
-    conn: &Connection,
-    group_ids: &[i64],
-    scope: Scope,
-) -> AppResult<Vec<Candidate>> {
-    let all = sampler::collect(conn, group_ids, scope)?;
-    if scope == Scope::Mistake {
-        return Ok(all);
-    }
-    let practiced = last_practiced_texts(conn)?;
+/// 只排序不过滤——过滤会让可抽数量凭空变少，用户选的题量就对不上了。
+fn fresh_first(candidates: Vec<Candidate>, practiced: &HashSet<String>) -> Vec<Candidate> {
     if practiced.is_empty() {
-        return Ok(all);
+        return candidates;
     }
-    let fresh: Vec<Candidate> = all
-        .iter()
-        .filter(|c| !practiced.contains(&c.text))
-        .cloned()
-        .collect();
-    if fresh.is_empty() {
-        return Ok(all);
-    }
-    Ok(fresh)
+    let (fresh, done): (Vec<_>, Vec<_>) =
+        candidates.into_iter().partition(|c| !practiced.contains(&c.text));
+    fresh.into_iter().chain(done).collect()
 }
 
 /// 最近一场（已批改 / 待批改 / 已放弃）默写出现过的词语文本
@@ -601,8 +594,17 @@ mod tests {
         assert_eq!(retried.group_label, "错题本");
     }
 
+    fn texts_of(conn: &Connection, session_id: i64) -> Vec<String> {
+        get(conn, session_id)
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|i| i.text)
+            .collect()
+    }
+
     #[test]
-    fn new_round_skips_words_from_last_session() {
+    fn new_round_prefers_unpracticed_words() {
         let conn = db::open_memory();
         let g = groups::create(&conn, None, "1", "第一单元").unwrap();
         for w in ["春天", "夏天", "秋天", "冬天"] {
@@ -610,16 +612,35 @@ mod tests {
         }
 
         let first = create(&conn, &[g.id], Scope::All, 2, false).unwrap();
-        let done: Vec<String> = get(&conn, first).unwrap().items.into_iter().map(|i| i.text).collect();
         finish_quiz(&conn, first).unwrap();
         submit_review(&conn, first, &[]).unwrap();
 
-        let second = create(&conn, &[g.id], Scope::All, 0, false).unwrap();
-        let rest: Vec<String> = get(&conn, second).unwrap().items.into_iter().map(|i| i.text).collect();
-        assert_eq!(rest.len(), 2, "只剩没默写过的两个词");
-        for text in &done {
-            assert!(!rest.contains(text), "上一场默写过的「{text}」不该再出现");
+        // 题量一样是 2，但这两题应该先给上一场没默写过的词
+        let second = create(&conn, &[g.id], Scope::All, 2, false).unwrap();
+        let rest = texts_of(&conn, second);
+        assert_eq!(rest, vec!["秋天", "冬天"]);
+    }
+
+    #[test]
+    fn limit_is_not_shrunk_by_last_session() {
+        let conn = db::open_memory();
+        let g = groups::create(&conn, None, "1", "第一单元").unwrap();
+        for w in ["春天", "夏天", "秋天", "冬天"] {
+            words::add(&conn, g.id, w, None).unwrap();
         }
+
+        let first = create(&conn, &[g.id], Scope::All, 2, false).unwrap();
+        finish_quiz(&conn, first).unwrap();
+        submit_review(&conn, first, &[]).unwrap();
+
+        // 选「全部」就是 4 个词，不能因为上一场写过两个就只剩两个
+        let second = create(&conn, &[g.id], Scope::All, 0, false).unwrap();
+        assert_eq!(get(&conn, second).unwrap().total, 4);
+        // 选「3 词」也要抽满 3 个：先给没写过的两个，再补一个写过的
+        let third = create(&conn, &[g.id], Scope::All, 3, false).unwrap();
+        let texts = texts_of(&conn, third);
+        assert_eq!(texts.len(), 3);
+        assert!(texts[..2].iter().all(|t| *t == "秋天" || *t == "冬天"));
     }
 
     #[test]
@@ -648,10 +669,10 @@ mod tests {
         finish_quiz(&conn, first).unwrap();
         submit_review(&conn, first, &[]).unwrap();
 
-        // 第二场把两个组都选上：g2 的那条「春天」是同一个词，同样要排除
-        let second = create(&conn, &[g1.id, g2.id], Scope::All, 0, false).unwrap();
-        let texts: Vec<String> = get(&conn, second).unwrap().items.into_iter().map(|i| i.text).collect();
-        assert_eq!(texts, vec!["秋天"]);
+        // 第二场把两个组都选上、只抽 1 个：g2 的那条「春天」是同一个词，
+        // 上一场写过就不该再抽到，应该给没写过的「秋天」
+        let second = create(&conn, &[g1.id, g2.id], Scope::All, 1, false).unwrap();
+        assert_eq!(texts_of(&conn, second), vec!["秋天"]);
     }
 
     #[test]
