@@ -133,19 +133,24 @@ ifeq (release,$(firstword $(MAKECMDGOALS)))
   NEW_VERSION   := $(patsubst v%,%,$(RELEASE_TAG))
 endif
 
-# 让 `make release v0.1.0` 里的 v0.1.0 作为目标时不报错（空操作）
+# 让 `make release v0.1.0` 里的 v0.1.0 作为目标时不报错
+# 别写 `@true` / `@:`：Windows 版 make 对这类命令会绕过 shell 直接找同名 exe，找不到就 e=2；
+# 用 node 保证任何环境都能执行（项目本来就要 node）
 v%:
-	@true
+	@node -e ""
 
-# 一键发版：改三处版本号 -> 提交 -> 打 tag -> 推送（触发 GitHub Actions 自动打包发布）
+# 一键发版：改五处版本号 -> 提交 -> 打 tag -> 推送（触发 GitHub Actions 自动打包发布）
+# 用 node 改版本：项目本来就有 node，Windows 上不一定装了 perl
+# 版本号已经是目标值时跳过提交，直接打 tag（避免重复发版卡在空提交）
+RELEASE_FILES := package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
+
 release:
 	@test -n "$(RELEASE_TAG)" || { echo "usage: make release v0.1.0"; exit 1; }
 	@echo "==> bump version -> $(NEW_VERSION)"
-	@perl -i -pe 's/("version"\s*:\s*")[\d.]+\s*(")/$${1}$(NEW_VERSION)$${2}/' package.json src-tauri/tauri.conf.json
-	@perl -i -pe 's/(^version\s*=\s*")[\d.]+(")/$${1}$(NEW_VERSION)$${2}/' src-tauri/Cargo.toml
-	@git diff --stat package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
-	@git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
-	@git commit -m "chore: release $(NEW_VERSION)"
+	@node scripts/bump-version.mjs $(NEW_VERSION)
+	@git diff --stat $(RELEASE_FILES)
+	@git add $(RELEASE_FILES)
+	@git diff --cached --quiet && echo "==> version already $(NEW_VERSION), skip commit" || git commit -m "chore: release $(NEW_VERSION)"
 	@git tag $(RELEASE_TAG)
 	@git push -u origin $$(git rev-parse --abbrev-ref HEAD)
 	@git push origin $(RELEASE_TAG)
