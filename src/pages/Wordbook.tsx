@@ -65,7 +65,9 @@ export default function Wordbook({ onPrint }: WordbookProps) {
   useEffect(() => {
     (async () => {
       try {
-        await refreshGroups();
+        const list = await refreshGroups();
+        // 首次进入默认全部折叠，先看到顶层分组；之后新建/删除分组不重置
+        setCollapsed(new Set(list.filter((g) => g.hasChildren).map((g) => g.id)));
       } catch (e) {
         notify("error", errorMessage(e));
       } finally {

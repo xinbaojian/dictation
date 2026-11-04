@@ -34,6 +34,7 @@ related: [data-model.md, decisions.md]
 | 下一个（空格） | `update_session_progress(id, index+1, null)` |
 | 不会（Enter） | `update_session_progress(id, index+1, item.id)` → 该 item `skip_marked=1` |
 | 上一个（←） | 仅本地回看，不回退 `current_seq` |
+| 已默写词 | 卡片下方一排小字按顺序列出本题之前的词（`items.slice(0, index)`），方便家长确认哪些已经读过；从进度恢复时同样显示 |
 | 退出（Esc） | 保留 `running`，回首页显示「继续默写」横幅 |
 | 最后一个 + 完成 | `finish_session` → `status='reviewing'` |
 

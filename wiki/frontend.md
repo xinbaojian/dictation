@@ -33,7 +33,7 @@ related: [architecture.md, decisions.md]
 | 错题本 | `pages/Mistakes.tsx` | 分组筛选、连对进度条（读设置）、专项默写、打印 |
 | 记录 | `pages/History.tsx` | 50 条列表 + 详情弹窗 + 只练本次错词 + 单条删除 |
 | 设置 | `pages/Settings.tsx` | 遮罩/连对/字号/连字抽词、备份导出导入、打开数据目录 |
-| 词表 | `pages/Wordbook.tsx` | 分组树（可折叠、**可拖动调整层级与顺序**）、词数/错题/最近练习、行内编辑、粘贴导入、标记错题 |
+| 词表 | `pages/Wordbook.tsx` | 分组树（可折叠、默认全部折叠、**可拖动调整层级与顺序**）、词数/错题/最近练习、行内编辑、粘贴导入、标记错题 |
 | 打印 | `pages/PrintSheet.tsx` | A4 排版 + 田字格，`window.print()` |
 
 ## 通用组件

@@ -167,6 +167,12 @@ export default function Quiz({ sessionId, onFinish, onExit }: QuizProps) {
             ? settings.maskSeconds + " 秒后自动遮住 · 空格=下一个 · Enter=不会"
             : "已遮住 · 点击词语或空格重新显示 · Enter=不会 · ←=上一个"}
         </p>
+        {index > 0 && (
+          <p className="mt-3 w-full max-w-2xl text-center text-xs leading-relaxed text-stone-400">
+            <span className="text-stone-300">已默写：</span>
+            {items.slice(0, index).map((item) => item.text).join(" · ")}
+          </p>
+        )}
       </div>
 
       <footer className="flex items-center justify-center gap-3 px-8 pb-8">
