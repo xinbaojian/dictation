@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import ConfirmModal from "../components/ConfirmModal";
 import { Toast, useNotice } from "../components/Toast";
 import { api, errorMessage, formatTime } from "../lib/ipc";
-import type { Group, Scope, Session } from "../types";
+import type { Group, SampleOptions, Scope, Session } from "../types";
 
 interface PickProps {
   onStart: (sessionId: number) => void;
@@ -18,6 +18,23 @@ const SCOPES: { value: Scope; title: string; desc: string }[] = [
 
 const LIMITS = [5, 10, 15, 20, 25, 30, 0];
 
+/** 抽词偏好：多选项，全不选 = 纯随机 */
+const PREFS: { key: keyof SampleOptions; title: string; desc: string }[] = [
+  { key: "weakFirst", title: "先练错过的字", desc: "含批改标过的字的词先抽" },
+  { key: "newFirst", title: "新词优先", desc: "没默写过的词排前面" },
+  { key: "lastBack", title: "上次写过的排后", desc: "刚默写过的词不马上再来" },
+  { key: "diverse", title: "同批不重字", desc: "一场里尽量少写同一个字" },
+  { key: "chain", title: "连字", desc: "下一个词优先和上一个词有相同的字" },
+];
+
+const DEFAULT_PREFS: SampleOptions = {
+  weakFirst: true,
+  newFirst: true,
+  lastBack: true,
+  diverse: true,
+  chain: false,
+};
+
 export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
   const [groups, setGroups] = useState<Group[]>([]);
   const [selected, setSelected] = useState<number[]>([]);
@@ -27,7 +44,7 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
   const [limit, setLimit] = useState(20);
   const [count, setCount] = useState(0);
   const [active, setActive] = useState<Session | null>(null);
-  const [chainByChar, setChainByChar] = useState(false);
+  const [prefs, setPrefs] = useState<SampleOptions>(DEFAULT_PREFS);
   const [busy, setBusy] = useState(false);
   /** 有未完成的会话时点「开始默写」，先弹窗问是继续还是放弃重开 */
   const [askingRestart, setAskingRestart] = useState(false);
@@ -37,17 +54,11 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
   useEffect(() => {
     (async () => {
       try {
-        const [list, session, settings] = await Promise.all([
-          api.listGroups(),
-          api.activeSession(),
-          // 读设置失败不该挡住开始默写，拿不到就按默认（不连字）显示
-          api.getSettings().catch(() => null),
-        ]);
+        const [list, session] = await Promise.all([api.listGroups(), api.activeSession()]);
         setGroups(list);
-        setSelected(list.map((g) => g.id));
+        // 默认不选分组：避免一进来就默认全选，误点开始抽到不想练的单元
         setCollapsed(new Set(list.filter((g) => g.hasChildren).map((g) => g.id)));
         setActive(session);
-        setChainByChar(settings?.chainByChar ?? false);
       } catch (e) {
         notify("error", errorMessage(e));
       } finally {
@@ -58,6 +69,11 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
   }, []);
 
   useEffect(() => {
+    // 一个分组都没选时不查后端：空数组在后端表示「全部分组」，会显示成可抽全部
+    if (selected.length === 0) {
+      setCount(0);
+      return;
+    }
     let alive = true;
     const timer = setTimeout(() => {
       api
@@ -145,7 +161,7 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
     if (busy || count === 0) return;
     setBusy(true);
     try {
-      const session = await api.createSession(selected, scope, limit, true);
+      const session = await api.createSession(selected, scope, limit, true, prefs);
       onStart(session.id);
     } catch (e) {
       notify("error", errorMessage(e));
@@ -361,6 +377,42 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
             ))}
           </div>
         </section>
+        <section className="mt-7">
+          <h2 className="mb-2 text-sm font-medium text-stone-700">抽词偏好</h2>
+          <div className="flex flex-wrap gap-2">
+            {PREFS.map((p) => {
+              const on = prefs[p.key];
+              return (
+                <button
+                  key={p.key}
+                  title={p.desc}
+                  onClick={() => setPrefs((prev) => ({ ...prev, [p.key]: !prev[p.key] }))}
+                  className={
+                    "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition " +
+                    (on
+                      ? "border-amber-300 bg-amber-50 text-amber-800"
+                      : "border-stone-200 bg-white text-stone-500 hover:border-stone-300")
+                  }
+                >
+                  <span
+                    className={
+                      "flex h-3.5 w-3.5 items-center justify-center rounded border text-[9px] " +
+                      (on ? "border-amber-600 bg-amber-600 text-white" : "border-stone-300 bg-white")
+                    }
+                  >
+                    {on ? "✓" : ""}
+                  </span>
+                  {p.title}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-stone-400">
+            {Object.values(prefs).every((v) => !v)
+              ? "全部关闭：纯随机抽词"
+              : "可多选；全部取消就是纯随机抽词"}
+          </p>
+        </section>
 
         <div className="mt-8 flex items-center justify-between rounded-xl border border-stone-200 bg-white px-5 py-4">
           <div>
@@ -369,7 +421,7 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
               {count > 0 && limit > 0 && count > limit ? "，本次抽 " + effectiveLimit + " 个" : ""}
             </p>
             <p className="mt-0.5 text-xs text-stone-400">
-              同批词尽量不重复用字，{chainByChar ? "下一个词优先和上一个词有相同的字" : "顺序随机"}，抽完自动进入批改
+              {selected.length === 0 ? "还没有选择分组" : "按上面的偏好抽词，抽完自动进入批改"}
             </p>
           </div>
           <button

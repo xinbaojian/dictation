@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-const VERSION: i32 = 2;
+const VERSION: i32 = 3;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +32,9 @@ struct BackupWord {
     status: String,
     wrong_count: i64,
     correct_streak: i64,
+    /// 手工加入错题本时标的错字下标（v3 起；老备份没有这个字段）
+    #[serde(default)]
+    wrong_chars: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,7 +79,7 @@ pub fn create(conn: &Connection, data_dir: &Path, dest_dir: Option<&str>) -> App
                 .map(|g| g.path_segments.clone())
                 .unwrap_or_else(|| vec![name.clone()]);
             let mut wstmt = conn.prepare(
-                "SELECT text, note, status, wrong_count, correct_streak
+                "SELECT text, note, status, wrong_count, correct_streak, wrong_chars
                  FROM words WHERE group_id = ?1 ORDER BY id",
             )?;
             let words = wstmt
@@ -87,6 +90,7 @@ pub fn create(conn: &Connection, data_dir: &Path, dest_dir: Option<&str>) -> App
                         status: r.get(2)?,
                         wrong_count: r.get(3)?,
                         correct_streak: r.get(4)?,
+                        wrong_chars: r.get(5)?,
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -222,8 +226,8 @@ pub fn import(conn: &Connection, path: &str) -> AppResult<ImportSummary> {
 
         let mut stmt = tx.prepare(
             "INSERT OR IGNORE INTO words
-               (group_id, text, note, status, wrong_count, correct_streak, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+               (group_id, text, note, status, wrong_count, correct_streak, wrong_chars, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
         )?;
         for word in group.words {
             let n = stmt.execute(params![
@@ -232,7 +236,8 @@ pub fn import(conn: &Connection, path: &str) -> AppResult<ImportSummary> {
                 word.note,
                 word.status,
                 word.wrong_count,
-                word.correct_streak
+                word.correct_streak,
+                word.wrong_chars
             ])?;
             if n == 1 {
                 summary.words_added += 1;

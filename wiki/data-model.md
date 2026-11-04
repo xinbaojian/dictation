@@ -39,7 +39,8 @@ related: [quiz-flow.md, architecture.md]
 | `status` | `new` / `learning` / `mastered`，见状态机 |
 | `wrong_count` | 累计答错次数，只增不减 |
 | `correct_streak` | 连续答对次数，答错归零 |
-| `last_practiced_at` | 最近一次被批改的时间 |
+| `last_practiced_at` | 最近一次被批改/手工加进错题本的时间 |
+| `wrong_chars` | **手工**加入错题本时标的错字下标（逗号分隔），与批改记录的 `session_items.wrong_chars` 合并展示；改词文本时清空 |
 
 唯一约束 `UNIQUE(group_id, text)`：同组不许重词。跨组允许重复，但抽题时会去重。
 
@@ -49,7 +50,7 @@ related: [quiz-flow.md, architecture.md]
 |---|---|
 | `mode` | `group`（按分组抽）/ `mistake`（错题专项、重试） |
 | `status` | `running` 进行中 / `reviewing` 待批改 / `finished` 已批改 / `abandoned` 已放弃 |
-| `config_json` | 抽题参数快照（分组 id、分组名、范围、题量），历史回看靠它解释 |
+| `config_json` | 抽题参数快照（分组 id、分组名、范围、题量、抽词偏好 `options`），历史回看靠它解释 |
 | `current_seq` | 已推进到的位置，用于中断恢复（**不是**待答词序号） |
 | `wrong_total` | 批改后写入的错词数 |
 
@@ -66,7 +67,7 @@ related: [quiz-flow.md, architecture.md]
 
 ### settings
 
-键值表，V1 只有一行：`key='app'`，值是一段 JSON（`maskSeconds / streakToMaster / wordFontSize / chainByChar`）。读时解析失败一律回落默认值；结构体带 `#[serde(default)]`，新增字段对旧库天然兼容（缺字段 = 默认值）。
+键值表，V1 只有一行：`key='app'`，值是一段 JSON（`maskSeconds / streakToMaster / wordFontSize`；连字已挪到每场默写的抽词偏好）。读时解析失败一律回落默认值；结构体带 `#[serde(default)]`，新增字段对旧库天然兼容（缺字段 = 默认值）。
 
 ## 不变量
 
@@ -76,6 +77,7 @@ related: [quiz-flow.md, architecture.md]
 4. 只有 `word_progress.rs` 能改 `status / wrong_count / correct_streak`
 5. `current_seq` ∈ [0, total]，表示「已完成多少个」
 6. 优先级只影响**排序**，不筛掉候选；题量挑选（`pick_diverse`）也只是从池子里选 N 个，池子本身不缩水
+7. 错字下标有两处来源：批改记录（`session_items.wrong_chars`，只增）和手工标记（`words.wrong_chars`，随词条走）；展示、弱字池都取并集
 
 ## 迁移策略
 
@@ -85,5 +87,5 @@ related: [quiz-flow.md, architecture.md]
 
 ## 备份格式
 
-`backups/backup-YYYYMMDD-HHMMSS.json`，结构：`{ version, exportedAt, groups:[{code,name,words:[{text,note,status,wrongCount,correctStreak}]}] }`。
+`backups/backup-YYYYMMDD-HHMMSS.json`，结构：`{ version, exportedAt, groups:[{code,name,words:[{text,note,status,wrongCount,correctStreak,wrongChars}]}] }`（v3 起带 `wrongChars`，老备份缺这个字段按空串导入）。
 导入是**合并非覆盖**：同 `code + name` 视为同一分组，词条 `INSERT OR IGNORE`，不修改已有进度。

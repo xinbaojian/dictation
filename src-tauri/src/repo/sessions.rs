@@ -18,6 +18,30 @@ pub struct SessionConfig {
     pub scope: String,
     #[serde(default)]
     pub limit: i64,
+    #[serde(default)]
+    pub options: SampleOptions,
+}
+
+/// 抽词偏好：前端「抽词偏好」多选项，全不选 = 纯随机
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SampleOptions {
+    /// 含历次标错的字优先
+    pub weak_first: bool,
+    /// 没默写过的新词优先
+    pub new_first: bool,
+    /// 最近一场写过的词排后
+    pub last_back: bool,
+    /// 同一批尽量不重复用字
+    pub diverse: bool,
+    /// 连字：下一个词优先和上一个词有相同的字
+    pub chain: bool,
+}
+
+impl Default for SampleOptions {
+    fn default() -> Self {
+        Self { weak_first: true, new_first: true, last_back: true, diverse: true, chain: false }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -99,31 +123,38 @@ fn parse_config(raw: &str) -> SessionConfig {
         group_names: vec![],
         scope: "all".into(),
         limit: 0,
+        options: SampleOptions::default(),
     })
 }
 
+/// 建会话：偏好全关时就是纯随机抽词
 pub fn create(
     conn: &Connection,
     group_ids: &[i64],
     scope: Scope,
     limit: i64,
     shuffle: bool,
+    options: SampleOptions,
 ) -> AppResult<i64> {
     let mut candidates = sampler::collect(conn, group_ids, scope)?;
     if candidates.is_empty() {
         return Err(AppError::msg(scope_empty_hint(scope)));
     }
     // 错题本模式不排除上次的错词：上次错的正是这次要练的
-    let practiced = if scope == Scope::Mistake {
+    let practiced = if scope == Scope::Mistake || !options.last_back {
         HashSet::new()
     } else {
         last_practiced_texts(conn)?
     };
     // 历次批改里点过「不会写」的字，用来把含这些字的词提前
-    let weak = weak_chars(conn)?;
+    let weak = if options.weak_first {
+        weak_chars(conn)?
+    } else {
+        HashSet::new()
+    };
     if shuffle {
         let mut rng = rand::thread_rng();
-        candidates = if settings::load(conn)?.chain_by_char {
+        candidates = if options.chain {
             // 「连字」：优先让下一个词和上一个词有相同的字，整体顺序仍然随机
             sampler::chain_by_shared_char(candidates, &mut rng)
         } else {
@@ -134,9 +165,15 @@ pub fn create(
     // 排序优先级：含写错过的字 > 新词 > 其余；同一档内保持打散后的顺序。
     // 上一场刚默写过的词只在本档内往后排，不从池子里删：删掉会让「题量 20」在 20 个词的
     // 分组里只抽出 10 个，看起来像题量没生效；词不够时宁可重复也要凑够用户选的题量。
-    let candidates = prioritize(candidates, &weak, &practiced);
+    let candidates = prioritize(candidates, &weak, &practiced, &options);
     // 题量有限时按「尽量不重复用字」挑，顺序仍按洗牌/连字后的原次序
-    let candidates = pick_diverse(candidates, limit as usize, &weak);
+    let candidates = if options.diverse {
+        pick_diverse(candidates, limit as usize, &weak, &options)
+    } else if limit > 0 {
+        candidates.into_iter().take(limit as usize).collect()
+    } else {
+        candidates
+    };
     let word_ids: Vec<i64> = candidates.iter().map(|c| c.word_id).collect();
 
     let group_names = load_group_names(conn, group_ids)?;
@@ -145,6 +182,7 @@ pub fn create(
         group_names,
         scope: scope.as_str().to_string(),
         limit,
+        options,
     };
     let mode = if scope == Scope::Mistake { "mistake" } else { "group" };
     insert(conn, mode, &config, &word_ids)
@@ -162,16 +200,18 @@ fn prioritize(
     mut candidates: Vec<Candidate>,
     weak: &HashSet<char>,
     practiced: &HashSet<String>,
+    options: &SampleOptions,
 ) -> Vec<Candidate> {
-    candidates.sort_by_key(|c| (tier_of(c, weak), practiced.contains(&c.text)));
+    candidates.sort_by_key(|c| (tier_of(c, weak, options), practiced.contains(&c.text)));
     candidates
 }
 
-/// 档位：0 = 含写错过的字，1 = 新词，2 = 其余已练过的词
-fn tier_of(c: &Candidate, weak: &HashSet<char>) -> u8 {
-    if c.text.chars().any(|ch| weak.contains(&ch)) {
+/// 档位：0 = 含写错过的字，1 = 新词，2 = 其余已练过的词。
+/// 对应偏好关掉时该档直接并入 2，等于不参与排序。
+fn tier_of(c: &Candidate, weak: &HashSet<char>, options: &SampleOptions) -> u8 {
+    if options.weak_first && c.text.chars().any(|ch| weak.contains(&ch)) {
         0
-    } else if c.is_new {
+    } else if options.new_first && c.is_new {
         1
     } else {
         2
@@ -183,7 +223,12 @@ fn tier_of(c: &Candidate, weak: &HashSet<char>) -> u8 {
 /// 逐档取词：高优先级先占满名额，只有同一档里词数超过名额时才做取舍——
 /// 先贪心挑「和已选词没有共同字」的，凑不满再按原顺序把同档剩下的补上。
 /// 结果保持入参顺序，随机性和连字顺序都不会被挑词打乱。
-fn pick_diverse(candidates: Vec<Candidate>, limit: usize, weak: &HashSet<char>) -> Vec<Candidate> {
+fn pick_diverse(
+    candidates: Vec<Candidate>,
+    limit: usize,
+    weak: &HashSet<char>,
+    options: &SampleOptions,
+) -> Vec<Candidate> {
     if limit == 0 || candidates.len() <= limit {
         return candidates;
     }
@@ -192,9 +237,9 @@ fn pick_diverse(candidates: Vec<Candidate>, limit: usize, weak: &HashSet<char>) 
     let mut left = limit;
     let mut start = 0;
     while start < candidates.len() && left > 0 {
-        let tier = tier_of(&candidates[start], weak);
+        let tier = tier_of(&candidates[start], weak, options);
         let mut end = start;
-        while end < candidates.len() && tier_of(&candidates[end], weak) == tier {
+        while end < candidates.len() && tier_of(&candidates[end], weak, options) == tier {
             end += 1;
         }
         let take = left.min(end - start);
@@ -249,14 +294,17 @@ fn select_in_tier(segment: &[Candidate], take: usize, used: &mut HashSet<char>) 
 
 /// 历次批改里标过「不会写」的字（跨词聚合）。
 ///
-/// 只认批改时点出的具体字：整词算错的条目 wrong_chars 为空，没有位置信息，跳过。
+/// 来源有两处：批改时点出的字（session_items）和手工加入错题本时标的字（words）。
+/// 整词算错的条目 wrong_chars 为空，没有位置信息，跳过；
 /// 词条后来被改短的话老下标会越界，直接丢掉，避免把别的字当成弱字。
 fn weak_chars(conn: &Connection) -> AppResult<HashSet<char>> {
     let mut stmt = conn.prepare(
         "SELECT w.text, i.wrong_chars
          FROM session_items i
          JOIN words w ON w.id = i.word_id
-         WHERE i.result = 'wrong' AND i.wrong_chars <> ''",
+         WHERE i.result = 'wrong' AND i.wrong_chars <> ''
+         UNION ALL
+         SELECT w.text, w.wrong_chars FROM words w WHERE w.wrong_chars <> ''",
     )?;
     let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
     let mut out = HashSet::new();
@@ -533,6 +581,7 @@ pub fn retry_wrong_words(conn: &Connection, session_id: i64) -> AppResult<i64> {
         group_names: vec![],
         scope: Scope::Mistake.as_str().to_string(),
         limit: word_ids.len() as i64,
+        options: SampleOptions::default(),
     };
     insert(conn, "mistake", &config, &word_ids)
 }
@@ -598,7 +647,7 @@ mod tests {
     #[test]
     fn create_writes_items_in_order() {
         let (conn, gid) = seed();
-        let id = create(&conn, &[gid], Scope::All, 2, false).unwrap();
+        let id = create(&conn, &[gid], Scope::All, 2, false, SampleOptions::default()).unwrap();
         let s = get(&conn, id).unwrap();
         assert_eq!(s.total, 2);
         assert_eq!(s.items.len(), 2);
@@ -612,14 +661,14 @@ mod tests {
     fn create_rejects_empty_pool() {
         let conn = db::open_memory();
         let g = groups::create(&conn, None, "1", "空分组").unwrap();
-        let err = create(&conn, &[g.id], Scope::All, 0, false).unwrap_err();
+        let err = create(&conn, &[g.id], Scope::All, 0, false, SampleOptions::default()).unwrap_err();
         assert!(err.to_string().contains("还没有词条"));
     }
 
     #[test]
     fn submit_review_updates_words_and_session() {
         let (conn, gid) = seed();
-        let id = create(&conn, &[gid], Scope::All, 0, false).unwrap();
+        let id = create(&conn, &[gid], Scope::All, 0, false, SampleOptions::default()).unwrap();
         let s = get(&conn, id).unwrap();
         finish_quiz(&conn, id).unwrap();
 
@@ -641,7 +690,7 @@ mod tests {
     #[test]
     fn wrong_chars_are_stored_per_item() {
         let (conn, gid) = seed();
-        let id = create(&conn, &[gid], Scope::All, 0, false).unwrap();
+        let id = create(&conn, &[gid], Scope::All, 0, false, SampleOptions::default()).unwrap();
         let s = get(&conn, id).unwrap();
         finish_quiz(&conn, id).unwrap();
 
@@ -662,7 +711,7 @@ mod tests {
     #[test]
     fn cannot_submit_twice() {
         let (conn, gid) = seed();
-        let id = create(&conn, &[gid], Scope::All, 1, false).unwrap();
+        let id = create(&conn, &[gid], Scope::All, 1, false, SampleOptions::default()).unwrap();
         finish_quiz(&conn, id).unwrap();
         submit_review(&conn, id, &[]).unwrap();
         assert!(submit_review(&conn, id, &[]).is_err());
@@ -671,7 +720,7 @@ mod tests {
     #[test]
     fn progress_and_skip_are_persisted() {
         let (conn, gid) = seed();
-        let id = create(&conn, &[gid], Scope::All, 0, false).unwrap();
+        let id = create(&conn, &[gid], Scope::All, 0, false, SampleOptions::default()).unwrap();
         let s = get(&conn, id).unwrap();
         update_progress(&conn, id, 2, Some(s.items[1].id)).unwrap();
 
@@ -685,7 +734,7 @@ mod tests {
     fn active_returns_latest_unfinished() {
         let (conn, gid) = seed();
         assert!(active(&conn).unwrap().is_none());
-        let id = create(&conn, &[gid], Scope::All, 1, false).unwrap();
+        let id = create(&conn, &[gid], Scope::All, 1, false, SampleOptions::default()).unwrap();
         assert_eq!(active(&conn).unwrap().unwrap().id, id);
         abandon(&conn, id).unwrap();
         assert!(active(&conn).unwrap().is_none());
@@ -694,7 +743,7 @@ mod tests {
     #[test]
     fn retry_builds_session_from_wrong_words() {
         let (conn, gid) = seed();
-        let id = create(&conn, &[gid], Scope::All, 0, false).unwrap();
+        let id = create(&conn, &[gid], Scope::All, 0, false, SampleOptions::default()).unwrap();
         let s = get(&conn, id).unwrap();
         finish_quiz(&conn, id).unwrap();
         submit_review(&conn, id, &marks(&[s.items[0].id, s.items[1].id])).unwrap();
@@ -723,12 +772,12 @@ mod tests {
             words::add(&conn, g.id, w, None).unwrap();
         }
 
-        let first = create(&conn, &[g.id], Scope::All, 2, false).unwrap();
+        let first = create(&conn, &[g.id], Scope::All, 2, false, SampleOptions::default()).unwrap();
         finish_quiz(&conn, first).unwrap();
         submit_review(&conn, first, &[]).unwrap();
 
         // 题量一样是 2，但这两题应该先给上一场没默写过的词
-        let second = create(&conn, &[g.id], Scope::All, 2, false).unwrap();
+        let second = create(&conn, &[g.id], Scope::All, 2, false, SampleOptions::default()).unwrap();
         let rest = texts_of(&conn, second);
         assert_eq!(rest, vec!["秋天", "冬天"]);
     }
@@ -741,11 +790,11 @@ mod tests {
         }
 
         // 第一场把「春天」「夏天」练成熟词，「秋天」还是新词
-        let first = create(&conn, &[g.id], Scope::All, 2, false).unwrap();
+        let first = create(&conn, &[g.id], Scope::All, 2, false, SampleOptions::default()).unwrap();
         finish_quiz(&conn, first).unwrap();
         submit_review(&conn, first, &[]).unwrap();
 
-        let second = create(&conn, &[g.id], Scope::All, 1, false).unwrap();
+        let second = create(&conn, &[g.id], Scope::All, 1, false, SampleOptions::default()).unwrap();
         assert_eq!(texts_of(&conn, second), vec!["秋天"], "新词应优先于已会词");
     }
 
@@ -758,7 +807,7 @@ mod tests {
         }
 
         // 批改时标出「春天」的「天」不会写
-        let first = create(&conn, &[g.id], Scope::All, 0, false).unwrap();
+        let first = create(&conn, &[g.id], Scope::All, 0, false, SampleOptions::default()).unwrap();
         finish_quiz(&conn, first).unwrap();
         let spring = get(&conn, first)
             .unwrap()
@@ -770,7 +819,7 @@ mod tests {
         submit_review(&conn, first, &[WrongMark { item_id: spring, chars: vec![1] }]).unwrap();
 
         // 下一场只抽 2 个：含「天」的两个词排在「月亮」前面
-        let second = create(&conn, &[g.id], Scope::All, 2, false).unwrap();
+        let second = create(&conn, &[g.id], Scope::All, 2, false, SampleOptions::default()).unwrap();
         assert_eq!(texts_of(&conn, second), vec!["春天", "天空"]);
     }
     fn cand(text: &str, is_new: bool) -> Candidate {
@@ -791,7 +840,7 @@ mod tests {
             cand("书包", true),
         ];
         // 天空和春天共用「天」，名额 3 时换成月亮、书包
-        let picked = pick_diverse(list, 3, &weak);
+        let picked = pick_diverse(list, 3, &weak, &SampleOptions::default());
         assert_eq!(texts_of_cands(&picked), vec!["春天", "月亮", "书包"]);
     }
 
@@ -800,7 +849,7 @@ mod tests {
         let weak: HashSet<char> = HashSet::new();
         let list = vec![cand("春天", true), cand("天空", true), cand("今天", true)];
         // 三个词都带「天」，第二轮按原顺序补，不能少抽
-        let picked = pick_diverse(list, 2, &weak);
+        let picked = pick_diverse(list, 2, &weak, &SampleOptions::default());
         assert_eq!(texts_of_cands(&picked), vec!["春天", "天空"]);
     }
 
@@ -814,20 +863,51 @@ mod tests {
             cand("月亮", true),
             cand("书包", true),
         ];
-        let picked = pick_diverse(list, 3, &weak);
+        let picked = pick_diverse(list, 3, &weak, &SampleOptions::default());
         assert_eq!(
             texts_of_cands(&picked),
             vec!["春天", "天空", "月亮"],
             "同档词不够时宁可重复字，也不能跳过弱字词去凑不重复"
         );
     }
+    #[test]
+    fn manual_char_marks_feed_weak_pool() {
+        let conn = db::open_memory();
+        let g = groups::create(&conn, None, "1", "第一单元").unwrap();
+        words::add_mistake(&conn, g.id, "春天", &[1]).unwrap();
+
+        let weak = weak_chars(&conn).unwrap();
+        assert!(weak.contains(&'天'), "手工标的错字也要进弱字池");
+    }
 
     #[test]
     fn no_limit_keeps_every_candidate() {
         let weak: HashSet<char> = HashSet::new();
         let list = vec![cand("春天", true), cand("天空", true)];
-        assert_eq!(pick_diverse(list.clone(), 0, &weak).len(), 2);
-        assert_eq!(pick_diverse(list, 5, &weak).len(), 2);
+        assert_eq!(pick_diverse(list.clone(), 0, &weak, &SampleOptions::default()).len(), 2);
+        assert_eq!(pick_diverse(list, 5, &weak, &SampleOptions::default()).len(), 2);
+    }
+    #[test]
+    fn all_preferences_off_is_plain_random() {
+        let conn = db::open_memory();
+        let g = groups::create(&conn, None, "1", "第一单元").unwrap();
+        for w in ["春天", "夏天", "秋天", "冬天"] {
+            words::add(&conn, g.id, w, None).unwrap();
+        }
+        let first = create(&conn, &[g.id], Scope::All, 2, false, SampleOptions::default()).unwrap();
+        finish_quiz(&conn, first).unwrap();
+        submit_review(&conn, first, &[]).unwrap();
+
+        let off = SampleOptions {
+            weak_first: false,
+            new_first: false,
+            last_back: false,
+            diverse: false,
+            chain: false,
+        };
+        let second = create(&conn, &[g.id], Scope::All, 2, false, off).unwrap();
+        // 偏好全关 + 不洗牌：原样取前两个，上一场刚写过也照样来
+        assert_eq!(texts_of(&conn, second), vec!["春天", "夏天"]);
     }
 
     #[test]
@@ -838,15 +918,15 @@ mod tests {
             words::add(&conn, g.id, w, None).unwrap();
         }
 
-        let first = create(&conn, &[g.id], Scope::All, 2, false).unwrap();
+        let first = create(&conn, &[g.id], Scope::All, 2, false, SampleOptions::default()).unwrap();
         finish_quiz(&conn, first).unwrap();
         submit_review(&conn, first, &[]).unwrap();
 
         // 选「全部」就是 4 个词，不能因为上一场写过两个就只剩两个
-        let second = create(&conn, &[g.id], Scope::All, 0, false).unwrap();
+        let second = create(&conn, &[g.id], Scope::All, 0, false, SampleOptions::default()).unwrap();
         assert_eq!(get(&conn, second).unwrap().total, 4);
         // 选「3 词」也要抽满 3 个：先给没写过的两个，再补一个写过的
-        let third = create(&conn, &[g.id], Scope::All, 3, false).unwrap();
+        let third = create(&conn, &[g.id], Scope::All, 3, false, SampleOptions::default()).unwrap();
         let texts = texts_of(&conn, third);
         assert_eq!(texts.len(), 3);
         assert!(texts[..2].iter().all(|t| *t == "秋天" || *t == "冬天"));
@@ -855,11 +935,11 @@ mod tests {
     #[test]
     fn new_round_falls_back_when_everything_was_practiced() {
         let (conn, gid) = seed();
-        let first = create(&conn, &[gid], Scope::All, 0, false).unwrap();
+        let first = create(&conn, &[gid], Scope::All, 0, false, SampleOptions::default()).unwrap();
         finish_quiz(&conn, first).unwrap();
         submit_review(&conn, first, &[]).unwrap();
 
-        let second = create(&conn, &[gid], Scope::All, 0, false).unwrap();
+        let second = create(&conn, &[gid], Scope::All, 0, false, SampleOptions::default()).unwrap();
         assert_eq!(get(&conn, second).unwrap().total, 3, "全练过时回退成不排除，不能开不了局");
     }
 
@@ -874,55 +954,52 @@ mod tests {
         words::add(&conn, g2.id, "秋天", None).unwrap();
 
         // 第一场只抽 g1，两个词都默写过
-        let first = create(&conn, &[g1.id], Scope::All, 0, false).unwrap();
+        let first = create(&conn, &[g1.id], Scope::All, 0, false, SampleOptions::default()).unwrap();
         finish_quiz(&conn, first).unwrap();
         submit_review(&conn, first, &[]).unwrap();
 
         // 第二场把两个组都选上、只抽 1 个：g2 的那条「春天」是同一个词，
         // 上一场写过就不该再抽到，应该给没写过的「秋天」
-        let second = create(&conn, &[g1.id, g2.id], Scope::All, 1, false).unwrap();
+        let second = create(&conn, &[g1.id, g2.id], Scope::All, 1, false, SampleOptions::default()).unwrap();
         assert_eq!(texts_of(&conn, second), vec!["秋天"]);
     }
 
     #[test]
     fn mistake_mode_does_not_skip_last_session() {
         let (conn, gid) = seed();
-        let first = create(&conn, &[gid], Scope::All, 0, false).unwrap();
+        let first = create(&conn, &[gid], Scope::All, 0, false, SampleOptions::default()).unwrap();
         let s = get(&conn, first).unwrap();
         finish_quiz(&conn, first).unwrap();
         submit_review(&conn, first, &marks(&[s.items[0].id])).unwrap();
 
-        let second = create(&conn, &[], Scope::Mistake, 0, true).unwrap();
+        let second = create(&conn, &[], Scope::Mistake, 0, true, SampleOptions::default()).unwrap();
         let after = get(&conn, second).unwrap();
         assert_eq!(after.total, 1, "错题本里上次错的词不能被排除");
         assert_eq!(after.items[0].text, s.items[0].text);
     }
 
     #[test]
-    fn chain_setting_keeps_every_word_once() {
+    fn chain_preference_keeps_every_word_once() {
         let (conn, gid) = seed();
-        settings::save(
-            &conn,
-            &settings::SettingsDto { chain_by_char: true, ..Default::default() },
-        )
-        .unwrap();
+        let options = SampleOptions { chain: true, ..Default::default() };
 
-        let id = create(&conn, &[gid], Scope::All, 0, true).unwrap();
+        let id = create(&conn, &[gid], Scope::All, 0, true, options).unwrap();
         let mut texts: Vec<String> = get(&conn, id).unwrap().items.into_iter().map(|i| i.text).collect();
         texts.sort();
         assert_eq!(texts, vec!["夏天", "春天", "秋天"], "连字只改顺序，不能漏词或重复");
     }
 
     #[test]
-    fn chain_setting_is_off_by_default() {
-        let conn = db::open_memory();
-        assert!(!settings::load(&conn).unwrap().chain_by_char);
+    fn default_preferences_match_ui() {
+        let o = SampleOptions::default();
+        assert!(o.weak_first && o.new_first && o.last_back && o.diverse);
+        assert!(!o.chain, "连字默认不选");
     }
 
     #[test]
     fn delete_removes_session_and_items_only() {
         let (conn, gid) = seed();
-        let id = create(&conn, &[gid], Scope::All, 0, false).unwrap();
+        let id = create(&conn, &[gid], Scope::All, 0, false, SampleOptions::default()).unwrap();
         let s = get(&conn, id).unwrap();
         finish_quiz(&conn, id).unwrap();
         submit_review(&conn, id, &marks(&[s.items[0].id])).unwrap();

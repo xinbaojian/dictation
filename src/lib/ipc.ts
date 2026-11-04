@@ -7,6 +7,7 @@ import type {
   ImportSummary,
   Mistake,
   ReviewResult,
+  SampleOptions,
   Session,
   SessionSummary,
   Settings,
@@ -40,8 +41,8 @@ export const api = {
   // 默写
   countCandidates: (groupIds: number[], scope: string) =>
     invoke<number>("count_candidates", { groupIds, scope }),
-  createSession: (groupIds: number[], scope: string, limit: number, shuffle: boolean) =>
-    invoke<Session>("create_session", { groupIds, scope, limit, shuffle }),
+  createSession: (groupIds: number[], scope: string, limit: number, shuffle: boolean, options: SampleOptions) =>
+    invoke<Session>("create_session", { groupIds, scope, limit, shuffle, options }),
   getSession: (id: number) => invoke<Session>("get_session", { id }),
   activeSession: () => invoke<Session | null>("active_session"),
   updateSessionProgress: (sessionId: number, currentSeq: number, skipItemId: number | null) =>
@@ -57,6 +58,9 @@ export const api = {
 
   // 错题本
   listMistakes: (groupId: number | null) => invoke<Mistake[]>("list_mistakes", { groupId }),
+  /** 手工把词语加进错题本；wrongChars 是「不会写的字」下标（越界由后端丢弃） */
+  addMistake: (groupId: number, text: string, wrongChars: number[]) =>
+    invoke<Word>("add_mistake", { groupId, text, wrongChars }),
   setWordMastered: (wordId: number, mastered: boolean) =>
     invoke<void>("set_word_mastered", { wordId, mastered }),
 

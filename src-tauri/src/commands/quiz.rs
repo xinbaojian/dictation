@@ -1,7 +1,7 @@
 use crate::domain::sampler::{self, Scope};
 use crate::error::AppResult;
-use crate::repo::sessions::{self, ReviewResult, SessionDto, SessionSummaryDto, WrongMark};
-use crate::repo::words::{self, MistakeDto};
+use crate::repo::sessions::{self, ReviewResult, SampleOptions, SessionDto, SessionSummaryDto, WrongMark};
+use crate::repo::words::{self, MistakeDto, WordDto};
 use crate::repo::word_progress;
 use crate::AppState;
 use tauri::State;
@@ -25,10 +25,11 @@ pub fn create_session(
     scope: String,
     limit: i64,
     shuffle: bool,
+    options: SampleOptions,
 ) -> AppResult<SessionDto> {
     let conn = state.conn()?;
     let scope = Scope::parse(&scope)?;
-    let id = sessions::create(&conn, &group_ids, scope, limit, shuffle)?;
+    let id = sessions::create(&conn, &group_ids, scope, limit, shuffle, options)?;
     sessions::get(&conn, id)
 }
 
@@ -105,6 +106,18 @@ pub fn list_mistakes(
 ) -> AppResult<Vec<MistakeDto>> {
     let conn = state.conn()?;
     words::list_mistakes(&conn, group_id)
+}
+
+/// 手工把词语加进错题本，可选标出不会写的字（下标，越界自动丢弃）
+#[tauri::command]
+pub fn add_mistake(
+    state: State<'_, AppState>,
+    group_id: i64,
+    text: String,
+    wrong_chars: Vec<i64>,
+) -> AppResult<WordDto> {
+    let conn = state.conn()?;
+    words::add_mistake(&conn, group_id, &text, &wrong_chars)
 }
 
 #[tauri::command]

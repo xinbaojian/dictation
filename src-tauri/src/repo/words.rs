@@ -1,8 +1,8 @@
-use crate::domain::text::{normalize_word, parse_char_indices};
+use crate::domain::text::{format_char_indices, normalize_word, parse_char_indices};
 use crate::error::{is_unique_violation, AppError, AppResult};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +98,50 @@ pub fn add(conn: &Connection, group_id: i64, text: &str, note: Option<&str>) -> 
     get(conn, conn.last_insert_rowid())
 }
 
+/// 手工把词语加入错题本，并记下「不会写的字」下标。
+///
+/// - 词条已存在（同分组同名）就直接复用，不报「已有该词」
+/// - 进度推进仍走 `word_progress::mark_wrong`，错误次数 +1
+/// - 错字下标与之前手工标过的合并，越界的老下标丢弃
+pub fn add_mistake(
+    conn: &Connection,
+    group_id: i64,
+    text: &str,
+    chars: &[i64],
+) -> AppResult<WordDto> {
+    let text = normalize_word(text);
+    if text.is_empty() {
+        return Err(AppError::msg("词语不能为空"));
+    }
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM words WHERE group_id = ?1 AND text = ?2",
+            params![group_id, text],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let id = match existing {
+        Some(id) => id,
+        None => add(conn, group_id, &text, None)?.id,
+    };
+    crate::repo::word_progress::mark_wrong(conn, id)?;
+
+    let raw: String = conn.query_row(
+        "SELECT wrong_chars FROM words WHERE id = ?1",
+        params![id],
+        |r| r.get(0),
+    )?;
+    let len = text.chars().count() as i64;
+    let mut merged: BTreeSet<i64> = parse_char_indices(&raw).into_iter().collect();
+    merged.extend(chars.iter().copied().filter(|i| *i >= 0 && *i < len));
+    let merged: Vec<i64> = merged.into_iter().collect();
+    conn.execute(
+        "UPDATE words SET wrong_chars = ?1 WHERE id = ?2",
+        params![format_char_indices(&merged), id],
+    )?;
+    get(conn, id)
+}
+
 /// 批量导入：已存在的词条跳过而不报错，返回实际写入与跳过数量
 pub fn import(conn: &Connection, group_id: i64, texts: &[String]) -> AppResult<ImportResult> {
     let tx = conn.unchecked_transaction()?;
@@ -133,9 +177,13 @@ pub fn update(conn: &Connection, id: i64, text: &str, note: Option<&str>) -> App
     }
     let current = get(conn, id)?;
     let note = note.map(str::trim).filter(|s| !s.is_empty());
+    // 改了字以后原来的错字下标就指错位置了，直接清掉手工标记
+    let text_changed = text != current.text;
     let result = conn.execute(
-        "UPDATE words SET text = ?1, note = ?2 WHERE id = ?3",
-        params![text, note, id],
+        "UPDATE words SET text = ?1, note = ?2,
+                wrong_chars = CASE WHEN ?3 THEN '' ELSE wrong_chars END
+         WHERE id = ?4",
+        params![text, note, text_changed, id],
     );
     if let Err(e) = result {
         if is_unique_violation(&e) {
@@ -210,6 +258,22 @@ fn load_char_marks(
             for c in chars {
                 *entry.counts.entry(c).or_insert(0) += 1;
             }
+        }
+    }
+    // 手工加入错题本时标的字没有批改记录，单独补进同一份聚合
+    let mut stmt = conn.prepare(
+        "SELECT id, wrong_chars FROM words
+         WHERE status = 'learning' AND wrong_chars <> ''
+           AND (?1 IS NULL OR group_id = ?1)",
+    )?;
+    let rows = stmt.query_map(params![group_id], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (word_id, raw) = row?;
+        let entry = marks.entry(word_id).or_default();
+        for c in parse_char_indices(&raw) {
+            entry.counts.entry(c).or_insert(0);
         }
     }
     Ok(marks)
@@ -312,8 +376,15 @@ mod tests {
 
     /// 走一遍「默写 → 批改」，返回被标错的那个词
     fn mark_wrong(conn: &Connection, gid: i64, text: &str, chars: Vec<i64>) -> i64 {
-        let sid = crate::repo::sessions::create(conn, &[gid], crate::domain::sampler::Scope::All, 0, false)
-            .unwrap();
+        let sid = crate::repo::sessions::create(
+            conn,
+            &[gid],
+            crate::domain::sampler::Scope::All,
+            0,
+            false,
+            crate::repo::sessions::SampleOptions::default(),
+        )
+        .unwrap();
         let session = crate::repo::sessions::get(conn, sid).unwrap();
         let item = session.items.iter().find(|i| i.text == text).unwrap().id;
         crate::repo::sessions::finish_quiz(conn, sid).unwrap();
@@ -385,5 +456,40 @@ mod tests {
             .find(|x| x.id == wid)
             .unwrap();
         assert_eq!(m.wrong_chars, vec![0], "越界的老下标应被丢掉");
+    }
+    #[test]
+    fn add_mistake_creates_learning_word_with_chars() {
+        let (conn, gid) = setup();
+        let w = add_mistake(&conn, gid, "春天", &[1]).unwrap();
+        assert_eq!(w.status, "learning");
+        assert_eq!(w.wrong_count, 1);
+
+        let m = list_mistakes(&conn, None).unwrap();
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].wrong_chars, vec![1]);
+    }
+
+    #[test]
+    fn add_mistake_reuses_existing_word_and_merges_chars() {
+        let (conn, gid) = setup();
+        add(&conn, gid, "春天", None).unwrap();
+        add_mistake(&conn, gid, "春天", &[0]).unwrap();
+        // 9 越界，应被丢掉
+        let w = add_mistake(&conn, gid, "春天", &[1, 9]).unwrap();
+        assert_eq!(w.wrong_count, 2);
+
+        let m = list_mistakes(&conn, None).unwrap();
+        assert_eq!(m.len(), 1, "已有词条不该报错，也不该重复建词");
+        assert_eq!(m[0].wrong_chars, vec![0, 1]);
+    }
+
+    #[test]
+    fn renaming_word_clears_manual_chars() {
+        let (conn, gid) = setup();
+        let w = add_mistake(&conn, gid, "春天", &[1]).unwrap();
+        update(&conn, w.id, "春风", None).unwrap();
+
+        let m = list_mistakes(&conn, None).unwrap();
+        assert!(m[0].wrong_chars.is_empty(), "改字后老下标失效，应清空");
     }
 }

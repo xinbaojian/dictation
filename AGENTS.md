@@ -23,7 +23,7 @@ make dmg                   # macOS：只出 .dmg 安装包（等价于 make buil
 npm run tauri dev          # 开发运行（Vite 1420 + Rust）
 npm run typecheck          # 前端类型检查（tsc --noEmit）
 npm run build              # 前端构建（typecheck + vite build）
-cd src-tauri && cargo test # 后端单测，当前 72 个
+cd src-tauri && cargo test # 后端单测，当前 77 个
 cd src-tauri && cargo build
 npm run tauri build        # 出安装包（Windows=NSIS，macOS=DMG，由 Makefile 的 --bundles 控制）
 ```
@@ -36,7 +36,7 @@ npm run tauri build        # 出安装包（Windows=NSIS，macOS=DMG，由 Makef
 ## 目录
 
 ```
-src-tauri/migrations/   0001 表结构、0002 会话进度、0003 错字标记、0004 分组树（只增不改，user_version 递增）
+src-tauri/migrations/   0001 表结构、0002 会话进度、0003 错字标记、0004 分组树、0005 手工错字（只增不改，user_version 递增）
 src-tauri/src/db/       连接 + WAL + 迁移
 src-tauri/src/domain/   text.rs 粘贴切分、sampler.rs 抽题（纯函数，带单测）
 src-tauri/src/repo/     groups / words / sessions / word_progress / settings / backup

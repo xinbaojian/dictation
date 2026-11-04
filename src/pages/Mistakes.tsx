@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AddMistakeModal from "../components/AddMistakeModal";
 import { Toast, useNotice } from "../components/Toast";
 import { api, errorMessage, formatTime } from "../lib/ipc";
 import type { Group, Mistake } from "../types";
@@ -44,6 +45,7 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
   const [groups, setGroups] = useState<Group[]>([]);
   const [filter, setFilter] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [streak, setStreak] = useState(2);
   const { notice, notify } = useNotice();
@@ -62,7 +64,7 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
           api.getSettings(),
         ]);
         setMistakes(list);
-        setGroups(gs.filter((g) => g.learningCount > 0));
+        setGroups(gs);
         setStreak(cfg.streakToMaster);
       } catch (e) {
         notify("error", errorMessage(e));
@@ -86,7 +88,13 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
     if (busy) return;
     setBusy(true);
     try {
-      const session = await api.createSession(filter == null ? [] : [filter], "mistake", 0, true);
+      const session = await api.createSession(filter == null ? [] : [filter], "mistake", 0, true, {
+        chain: false,
+        weakFirst: true,
+        newFirst: true,
+        lastBack: true,
+        diverse: true,
+      });
       onStart(session.id);
     } catch (e) {
       notify("error", errorMessage(e));
@@ -94,10 +102,23 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
     }
   };
 
+  const addMistake = async (groupId: number, text: string, chars: number[]) => {
+    try {
+      await api.addMistake(groupId, text, chars);
+      setAddOpen(false);
+      await reload(filter);
+      setGroups(await api.listGroups());
+      notify("ok", "「" + text + "」已加入错题本");
+    } catch (e) {
+      notify("error", errorMessage(e));
+    }
+  };
+
   const master = async (word: Mistake) => {
     try {
       await api.setWordMastered(word.id, true);
       await reload(filter);
+      setGroups(await api.listGroups());
       notify("ok", "「" + word.text + "」已移出错题本");
     } catch (e) {
       notify("error", errorMessage(e));
@@ -124,12 +145,20 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
             className="rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-sm text-stone-600"
           >
             <option value="">全部分组</option>
-            {groups.map((g) => (
+            {groups.filter((g) => g.learningCount > 0).map((g) => (
               <option key={g.id} value={g.id}>
                 {g.path}
               </option>
             ))}
           </select>
+          <button
+            onClick={() => setAddOpen(true)}
+            disabled={groups.length === 0}
+            title={groups.length === 0 ? "先去词语表建一个分组" : "手工把一个词加入错题本"}
+            className="rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            添加词语
+          </button>
           <button
             onClick={practice}
             disabled={mistakes.length === 0 || busy}
@@ -158,13 +187,22 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
         {mistakes.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
             <p className="text-sm text-stone-500">错题本是空的</p>
-            <p className="text-xs text-stone-400">默写后批改出错的词会自动收进来</p>
-            <button
-              onClick={onGoWordbook}
-              className="rounded-md border border-stone-200 px-4 py-1.5 text-sm text-stone-600 hover:bg-stone-50"
-            >
-              去词语表看看
-            </button>
+            <p className="text-xs text-stone-400">默写后批改出错的词会自动收进来，也可以手动添加</p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setAddOpen(true)}
+                disabled={groups.length === 0}
+                className="rounded-md bg-amber-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-stone-300"
+              >
+                添加词语
+              </button>
+              <button
+                onClick={onGoWordbook}
+                className="rounded-md border border-stone-200 px-4 py-1.5 text-sm text-stone-600 hover:bg-stone-50"
+              >
+                去词语表看看
+              </button>
+            </div>
           </div>
         ) : (
           <table className="w-full border-collapse text-sm">
@@ -217,6 +255,15 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
           </table>
         )}
       </div>
+
+      {addOpen && (
+        <AddMistakeModal
+          groups={groups}
+          defaultGroupId={filter}
+          onSubmit={addMistake}
+          onClose={() => setAddOpen(false)}
+        />
+      )}
 
       <Toast notice={notice} />
     </div>

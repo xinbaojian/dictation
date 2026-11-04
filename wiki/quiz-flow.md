@@ -20,6 +20,7 @@ related: [data-model.md, decisions.md]
 ## 二、建会话（`repo/sessions.rs::create`）
 
 - 候选池 = `sampler::collect` 的全部结果（范围过滤 + 跨组按文本去重）。
+- **抽词偏好**（`SampleOptions`，抽题页多选；除「连字」外默认全选）：`weakFirst / newFirst / lastBack / diverse / chain`。全不选 = 纯洗牌后直接取前 N，不带任何排序或去重。偏好写进 `config_json`，历史回看能还原这场是怎么抽的
 - **抽题优先级**（`sessions::prioritize`，稳定排序，同档内保留洗牌顺序）：① 含历次批改里标过「不会写」的字的词 → ② 新词（`status='new'`）→ ③ 其余已练过的词。弱字来自 `session_items.wrong_chars`，跨词聚合：标错「春天」的「天」，下一场的「天空」「今天」也会被提前；只在批改时点过具体字才算，整词算错没有位置信息，不参与
 - **最近一场**（`finished` / `reviewing` / `abandoned`）出现过的词语文本只在**同档内排到最后**，不从池子里删（不是 word_id——同一个词分在两个组是两条记录，按 text 才算真去重）。删掉会让「题量 20」在 20 个词的分组里只抽出 10 个，用户会以为题量没生效；词不够时宁可重复也要抽满题量。错题本范围（`mistake`）不做这个排序
 - **同批去重**（`sessions::pick_diverse`）：题量小于候选数时逐档挑词，同一档内优先挑「和已选词没有共同字」的，凑不满再按原顺序补；结果保持入参顺序（洗牌/连字的随机性不变）。跨档不重挑——含弱字的词本身就会共享那个字，所以这是「尽量」，不是硬约束
@@ -56,6 +57,8 @@ related: [data-model.md, decisions.md]
 提交状态不是 `reviewing` 时拒绝（防重复提交）。
 
 ## 五、错题本出本（`repo/word_progress.rs`）
+
+手工入口：错题本页「添加词语」→ `words::add_mistake`。词条不存在就先建，存在就复用；进度仍走 `mark_wrong`（错误次数 +1），标的字写进 `words.wrong_chars`（ADR-16），与批改记录合并展示。
 
 ```
 批改=错 → status='learning', wrong_count+1, correct_streak=0

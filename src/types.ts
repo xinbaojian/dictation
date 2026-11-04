@@ -111,8 +111,20 @@ export interface Settings {
   maskSeconds: number;
   streakToMaster: number;
   wordFontSize: number;
-  /** 随机抽词时优先让下一个词和上一个词有相同的字 */
-  chainByChar: boolean;
+}
+
+/** 抽词偏好：开一场默写时勾选，全不选 = 纯随机 */
+export interface SampleOptions {
+  /** 连字：下一个词优先和上一个词有相同的字 */
+  chain: boolean;
+  /** 含批改标过的字优先 */
+  weakFirst: boolean;
+  /** 没默写过的新词优先 */
+  newFirst: boolean;
+  /** 最近一场写过的词排后 */
+  lastBack: boolean;
+  /** 同一批尽量不重复用字 */
+  diverse: boolean;
 }
 
 export interface ReviewResult {

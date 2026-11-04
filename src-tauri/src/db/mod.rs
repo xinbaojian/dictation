@@ -9,6 +9,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (2, include_str!("../../migrations/0002_session_progress.sql")),
     (3, include_str!("../../migrations/0003_wrong_chars.sql")),
     (4, include_str!("../../migrations/0004_group_tree.sql")),
+    (5, include_str!("../../migrations/0005_word_wrong_chars.sql")),
 ];
 
 pub fn init(app: &AppHandle) -> AppResult<(Connection, PathBuf)> {
