@@ -90,6 +90,7 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
     try {
       const session = await api.createSession(filter == null ? [] : [filter], "mistake", 0, true, {
         chain: false,
+        repeatWrong: true,
         weakFirst: true,
         newFirst: true,
         lastBack: true,

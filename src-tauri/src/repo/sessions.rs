@@ -26,6 +26,8 @@ pub struct SessionConfig {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SampleOptions {
+    /// 同一个字在多个词里都写错过时优先（掌握最差）
+    pub repeat_wrong: bool,
     /// 含历次标错的字优先
     pub weak_first: bool,
     /// 没默写过的新词优先
@@ -40,7 +42,7 @@ pub struct SampleOptions {
 
 impl Default for SampleOptions {
     fn default() -> Self {
-        Self { weak_first: true, new_first: true, last_back: true, diverse: true, chain: false }
+        Self { repeat_wrong: true, weak_first: true, new_first: true, last_back: true, diverse: true, chain: false }
     }
 }
 
@@ -146,12 +148,18 @@ pub fn create(
     } else {
         last_practiced_texts(conn)?
     };
-    // 历次批改里点过「不会写」的字，用来把含这些字的词提前
-    let weak = if options.weak_first {
-        weak_chars(conn)?
+    // 历次标错的字：同一个字在越多不同的词里错，说明掌握越差
+    let counts = if options.weak_first || options.repeat_wrong {
+        weak_char_counts(conn)?
     } else {
-        HashSet::new()
+        HashMap::new()
     };
+    let weak: HashSet<char> = counts.keys().copied().collect();
+    let repeated: HashSet<char> = counts
+        .iter()
+        .filter(|(_, words)| **words >= 2)
+        .map(|(ch, _)| *ch)
+        .collect();
     if shuffle {
         let mut rng = rand::thread_rng();
         candidates = if options.chain {
@@ -162,13 +170,13 @@ pub fn create(
             candidates
         };
     }
-    // 排序优先级：含写错过的字 > 新词 > 其余；同一档内保持打散后的顺序。
+    // 排序优先级：重复错字 > 含错字 > 新词 > 其余；同一档内保持打散后的顺序。
     // 上一场刚默写过的词只在本档内往后排，不从池子里删：删掉会让「题量 20」在 20 个词的
     // 分组里只抽出 10 个，看起来像题量没生效；词不够时宁可重复也要凑够用户选的题量。
-    let candidates = prioritize(candidates, &weak, &practiced, &options);
+    let candidates = prioritize(candidates, &weak, &repeated, &practiced, &options);
     // 题量有限时按「尽量不重复用字」挑，顺序仍按洗牌/连字后的原次序
     let candidates = if options.diverse {
-        pick_diverse(candidates, limit as usize, &weak, &options)
+        pick_diverse(candidates, limit as usize, &weak, &repeated, &options)
     } else if limit > 0 {
         candidates.into_iter().take(limit as usize).collect()
     } else {
@@ -190,7 +198,7 @@ pub fn create(
 
 /// 抽词排序：先按档位，再按「最近一场刚写过」。
 ///
-/// 档位：0 = 含历次批改里标错的字，1 = 新词（没默写过），2 = 其余已练过的词。
+/// 档位：0 = 同一个字在多个词里都错过，1 = 含标错的字，2 = 新词（没默写过），3 = 其余已练过的词。
 /// 用稳定排序，所以同一档内保留入参顺序（洗过牌就是随机，没洗就是词表顺序），
 /// 不会把随机性排没。只排序不过滤——过滤会让可抽数量凭空变少，用户选的题量就对不上了。
 ///
@@ -199,22 +207,39 @@ pub fn create(
 fn prioritize(
     mut candidates: Vec<Candidate>,
     weak: &HashSet<char>,
+    repeated: &HashSet<char>,
     practiced: &HashSet<String>,
     options: &SampleOptions,
 ) -> Vec<Candidate> {
-    candidates.sort_by_key(|c| (tier_of(c, weak, options), practiced.contains(&c.text)));
+    candidates.sort_by_key(|c| {
+        (
+            tier_of(c, weak, repeated, options),
+            practiced.contains(&c.text),
+        )
+    });
     candidates
 }
 
-/// 档位：0 = 含写错过的字，1 = 新词，2 = 其余已练过的词。
-/// 对应偏好关掉时该档直接并入 2，等于不参与排序。
-fn tier_of(c: &Candidate, weak: &HashSet<char>, options: &SampleOptions) -> u8 {
-    if options.weak_first && c.text.chars().any(|ch| weak.contains(&ch)) {
+/// 档位越小越先抽；对应偏好关掉时该档自然并入后面的档。
+///
+/// 0 = 同一个字在多个不同的词里都写错过（掌握最差，优先补）
+/// 1 = 含任何标错的字
+/// 2 = 没默写过的新词
+/// 3 = 其余已练过的词
+fn tier_of(
+    c: &Candidate,
+    weak: &HashSet<char>,
+    repeated: &HashSet<char>,
+    options: &SampleOptions,
+) -> u8 {
+    if options.repeat_wrong && c.text.chars().any(|ch| repeated.contains(&ch)) {
         0
-    } else if options.new_first && c.is_new {
+    } else if options.weak_first && c.text.chars().any(|ch| weak.contains(&ch)) {
         1
-    } else {
+    } else if options.new_first && c.is_new {
         2
+    } else {
+        3
     }
 }
 
@@ -227,6 +252,7 @@ fn pick_diverse(
     candidates: Vec<Candidate>,
     limit: usize,
     weak: &HashSet<char>,
+    repeated: &HashSet<char>,
     options: &SampleOptions,
 ) -> Vec<Candidate> {
     if limit == 0 || candidates.len() <= limit {
@@ -237,9 +263,9 @@ fn pick_diverse(
     let mut left = limit;
     let mut start = 0;
     while start < candidates.len() && left > 0 {
-        let tier = tier_of(&candidates[start], weak, options);
+        let tier = tier_of(&candidates[start], weak, repeated, options);
         let mut end = start;
-        while end < candidates.len() && tier_of(&candidates[end], weak, options) == tier {
+        while end < candidates.len() && tier_of(&candidates[end], weak, repeated, options) == tier {
             end += 1;
         }
         let take = left.min(end - start);
@@ -292,35 +318,42 @@ fn select_in_tier(segment: &[Candidate], take: usize, used: &mut HashSet<char>) 
         .collect()
 }
 
-/// 历次批改里标过「不会写」的字（跨词聚合）。
+/// 每个错字出现在多少个**不同的词**里。
 ///
 /// 来源有两处：批改时点出的字（session_items）和手工加入错题本时标的字（words）。
-/// 整词算错的条目 wrong_chars 为空，没有位置信息，跳过；
+/// 同一个词在不同会话里重复错只算一个词；整词算错的条目 wrong_chars 为空，跳过；
 /// 词条后来被改短的话老下标会越界，直接丢掉，避免把别的字当成弱字。
-fn weak_chars(conn: &Connection) -> AppResult<HashSet<char>> {
+fn weak_char_counts(conn: &Connection) -> AppResult<HashMap<char, i64>> {
     let mut stmt = conn.prepare(
-        "SELECT w.text, i.wrong_chars
+        "SELECT w.id, w.text, i.wrong_chars
          FROM session_items i
          JOIN words w ON w.id = i.word_id
          WHERE i.result = 'wrong' AND i.wrong_chars <> ''
          UNION ALL
-         SELECT w.text, w.wrong_chars FROM words w WHERE w.wrong_chars <> ''",
+         SELECT w.id, w.text, w.wrong_chars FROM words w WHERE w.wrong_chars <> ''",
     )?;
-    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-    let mut out = HashSet::new();
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+        ))
+    })?;
+    // 字 -> 标错过的词 id 集合，最后按词数计；同一个词重复错不会把计数抬高
+    let mut by_char: HashMap<char, HashSet<i64>> = HashMap::new();
     for row in rows {
-        let (text, raw) = row?;
+        let (word_id, text, raw) = row?;
         let chars: Vec<char> = text.chars().collect();
         for idx in parse_char_indices(&raw) {
             let Some(ch) = usize::try_from(idx).ok().and_then(|i| chars.get(i)) else {
                 continue;
             };
             if !ch.is_whitespace() {
-                out.insert(*ch);
+                by_char.entry(*ch).or_default().insert(word_id);
             }
         }
     }
-    Ok(out)
+    Ok(by_char.into_iter().map(|(ch, words)| (ch, words.len() as i64)).collect())
 }
 
 /// 最近一场（已批改 / 待批改 / 已放弃）默写出现过的词语文本
@@ -840,7 +873,7 @@ mod tests {
             cand("书包", true),
         ];
         // 天空和春天共用「天」，名额 3 时换成月亮、书包
-        let picked = pick_diverse(list, 3, &weak, &SampleOptions::default());
+        let picked = pick_diverse(list, 3, &weak, &HashSet::new(), &SampleOptions::default());
         assert_eq!(texts_of_cands(&picked), vec!["春天", "月亮", "书包"]);
     }
 
@@ -849,7 +882,7 @@ mod tests {
         let weak: HashSet<char> = HashSet::new();
         let list = vec![cand("春天", true), cand("天空", true), cand("今天", true)];
         // 三个词都带「天」，第二轮按原顺序补，不能少抽
-        let picked = pick_diverse(list, 2, &weak, &SampleOptions::default());
+        let picked = pick_diverse(list, 2, &weak, &HashSet::new(), &SampleOptions::default());
         assert_eq!(texts_of_cands(&picked), vec!["春天", "天空"]);
     }
 
@@ -863,7 +896,7 @@ mod tests {
             cand("月亮", true),
             cand("书包", true),
         ];
-        let picked = pick_diverse(list, 3, &weak, &SampleOptions::default());
+        let picked = pick_diverse(list, 3, &weak, &HashSet::new(), &SampleOptions::default());
         assert_eq!(
             texts_of_cands(&picked),
             vec!["春天", "天空", "月亮"],
@@ -876,16 +909,71 @@ mod tests {
         let g = groups::create(&conn, None, "1", "第一单元").unwrap();
         words::add_mistake(&conn, g.id, "春天", &[1]).unwrap();
 
-        let weak = weak_chars(&conn).unwrap();
-        assert!(weak.contains(&'天'), "手工标的错字也要进弱字池");
+        let counts = weak_char_counts(&conn).unwrap();
+        assert!(counts.contains_key(&'天'), "手工标的错字也要进弱字池");
+    }
+    #[test]
+    fn repeated_wrong_chars_outrank_single_ones() {
+        let weak: HashSet<char> = "天而".chars().collect();
+        let repeated: HashSet<char> = "而".chars().collect();
+        let opts = SampleOptions::default();
+        assert_eq!(tier_of(&cand("言而有信", true), &weak, &repeated, &opts), 0);
+        assert_eq!(tier_of(&cand("春天", true), &weak, &repeated, &opts), 1);
+
+        let off = SampleOptions { repeat_wrong: false, ..SampleOptions::default() };
+        assert_eq!(tier_of(&cand("言而有信", true), &weak, &repeated, &off), 1);
+    }
+
+    #[test]
+    fn weak_char_counts_only_counts_distinct_words() {
+        let conn = db::open_memory();
+        let g = groups::create(&conn, None, "1", "第一单元").unwrap();
+        words::add_mistake(&conn, g.id, "春天", &[1]).unwrap();
+        // 同一个词再标一次，不应该把出现次数当成 2
+        words::add_mistake(&conn, g.id, "春天", &[1]).unwrap();
+        assert_eq!(weak_char_counts(&conn).unwrap().get(&'天'), Some(&1));
+
+        words::add_mistake(&conn, g.id, "天空", &[0]).unwrap();
+        assert_eq!(weak_char_counts(&conn).unwrap().get(&'天'), Some(&2));
+    }
+
+    #[test]
+    fn char_wrong_in_two_words_is_sampled_first() {
+        let conn = db::open_memory();
+        let g = groups::create(&conn, None, "1", "第一单元").unwrap();
+        for w in ["春天", "轻而易举", "言而有信", "月亮"] {
+            words::add(&conn, g.id, w, None).unwrap();
+        }
+
+        // 批改：只有「天」错一次，「而」在两个词里都错
+        let first = create(&conn, &[g.id], Scope::All, 0, false, SampleOptions::default()).unwrap();
+        let items = get(&conn, first).unwrap().items;
+        let spring = items.iter().find(|i| i.text == "春天").unwrap().id;
+        let easy = items.iter().find(|i| i.text == "轻而易举").unwrap().id;
+        let promise = items.iter().find(|i| i.text == "言而有信").unwrap().id;
+        finish_quiz(&conn, first).unwrap();
+        submit_review(
+            &conn,
+            first,
+            &[
+                WrongMark { item_id: spring, chars: vec![1] },
+                WrongMark { item_id: easy, chars: vec![1] },
+                WrongMark { item_id: promise, chars: vec![1] },
+            ],
+        )
+        .unwrap();
+
+        // 含「而」的两个词抢先于只错过一次「天」的「春天」
+        let second = create(&conn, &[g.id], Scope::All, 1, false, SampleOptions::default()).unwrap();
+        assert_eq!(texts_of(&conn, second), vec!["轻而易举"]);
     }
 
     #[test]
     fn no_limit_keeps_every_candidate() {
         let weak: HashSet<char> = HashSet::new();
         let list = vec![cand("春天", true), cand("天空", true)];
-        assert_eq!(pick_diverse(list.clone(), 0, &weak, &SampleOptions::default()).len(), 2);
-        assert_eq!(pick_diverse(list, 5, &weak, &SampleOptions::default()).len(), 2);
+        assert_eq!(pick_diverse(list.clone(), 0, &weak, &HashSet::new(), &SampleOptions::default()).len(), 2);
+        assert_eq!(pick_diverse(list, 5, &weak, &HashSet::new(), &SampleOptions::default()).len(), 2);
     }
     #[test]
     fn all_preferences_off_is_plain_random() {
@@ -899,6 +987,7 @@ mod tests {
         submit_review(&conn, first, &[]).unwrap();
 
         let off = SampleOptions {
+            repeat_wrong: false,
             weak_first: false,
             new_first: false,
             last_back: false,

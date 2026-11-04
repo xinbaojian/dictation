@@ -20,6 +20,7 @@ const LIMITS = [5, 10, 15, 20, 25, 30, 0];
 
 /** 抽词偏好：多选项，全不选 = 纯随机 */
 const PREFS: { key: keyof SampleOptions; title: string; desc: string }[] = [
+  { key: "repeatWrong", title: "反复错的字优先", desc: "同一个字在多个错词里都错过，说明掌握差，先练" },
   { key: "weakFirst", title: "先练错过的字", desc: "含批改标过的字的词先抽" },
   { key: "newFirst", title: "新词优先", desc: "没默写过的词排前面" },
   { key: "lastBack", title: "上次写过的排后", desc: "刚默写过的词不马上再来" },
@@ -28,6 +29,7 @@ const PREFS: { key: keyof SampleOptions; title: string; desc: string }[] = [
 ];
 
 const DEFAULT_PREFS: SampleOptions = {
+  repeatWrong: true,
   weakFirst: true,
   newFirst: true,
   lastBack: true,

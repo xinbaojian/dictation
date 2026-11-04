@@ -117,6 +117,8 @@ export interface Settings {
 export interface SampleOptions {
   /** 连字：下一个词优先和上一个词有相同的字 */
   chain: boolean;
+  /** 同一个字在多个词里都写错过时优先 */
+  repeatWrong: boolean;
   /** 含批改标过的字优先 */
   weakFirst: boolean;
   /** 没默写过的新词优先 */

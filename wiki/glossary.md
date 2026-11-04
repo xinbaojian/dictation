@@ -23,7 +23,8 @@ related: [data-model.md, quiz-flow.md]
 | 不会 | 默写时点「不会」，批改页预置为错 | `skip_marked` |
 | 范围 | 抽题过滤：全部 / 仅未掌握 / 错题本 | `domain::Scope` |
 | 弱字 | 批改时点过「不会写」的字，跨词共享：错「春天」的「天」，「天空」也算弱 | `session_items.wrong_chars` → `weak_chars` |
-| 抽词优先级 | 建会话时的档位排序：含弱字 > 新词 > 其余 | `repo::sessions::prioritize` |
+| 抽词优先级 | 建会话时的档位排序：反复错的字 > 含弱字 > 新词 > 其余 | `repo::sessions::prioritize` |
+| 反复错字 | 同一个字在 ≥2 个不同词里都被标错，说明掌握差 | `sessions::weak_char_counts` |
 | 同批去重 | 一场默写里尽量不共用一个字（只在同一档内取舍） | `repo::sessions::pick_diverse` |
 | 抽词偏好 | 抽题页多选：先练错过的字 / 新词优先 / 上次写过的排后 / 同批不重字 / 连字；全不选 = 纯随机 | `SampleOptions` |
 | 手工错字 | 错题本里直接加词时标的字，存在词条上而不是会话里 | `words.wrong_chars` |
