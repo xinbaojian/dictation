@@ -75,7 +75,7 @@ related: [quiz-flow.md, architecture.md]
 3. `sessions.total = COUNT(session_items)`，建会话时一次性写入
 4. 只有 `word_progress.rs` 能改 `status / wrong_count / correct_streak`
 5. `current_seq` ∈ [0, total]，表示「已完成多少个」
-6. 抽题只**排序**（优先级 + 上一场排后），不删候选——任何过滤都会让题量抽不满
+6. 优先级只影响**排序**，不筛掉候选；题量挑选（`pick_diverse`）也只是从池子里选 N 个，池子本身不缩水
 
 ## 迁移策略
 

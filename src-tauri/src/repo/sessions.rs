@@ -134,10 +134,9 @@ pub fn create(
     // 排序优先级：含写错过的字 > 新词 > 其余；同一档内保持打散后的顺序。
     // 上一场刚默写过的词只在本档内往后排，不从池子里删：删掉会让「题量 20」在 20 个词的
     // 分组里只抽出 10 个，看起来像题量没生效；词不够时宁可重复也要凑够用户选的题量。
-    let mut candidates = prioritize(candidates, &weak, &practiced);
-    if limit > 0 {
-        candidates.truncate(limit as usize);
-    }
+    let candidates = prioritize(candidates, &weak, &practiced);
+    // 题量有限时按「尽量不重复用字」挑，顺序仍按洗牌/连字后的原次序
+    let candidates = pick_diverse(candidates, limit as usize, &weak);
     let word_ids: Vec<i64> = candidates.iter().map(|c| c.word_id).collect();
 
     let group_names = load_group_names(conn, group_ids)?;
@@ -164,17 +163,88 @@ fn prioritize(
     weak: &HashSet<char>,
     practiced: &HashSet<String>,
 ) -> Vec<Candidate> {
-    candidates.sort_by_key(|c| {
-        let tier = if c.text.chars().any(|ch| weak.contains(&ch)) {
-            0u8
-        } else if c.is_new {
-            1
-        } else {
-            2
-        };
-        (tier, practiced.contains(&c.text))
-    });
+    candidates.sort_by_key(|c| (tier_of(c, weak), practiced.contains(&c.text)));
     candidates
+}
+
+/// 档位：0 = 含写错过的字，1 = 新词，2 = 其余已练过的词
+fn tier_of(c: &Candidate, weak: &HashSet<char>) -> u8 {
+    if c.text.chars().any(|ch| weak.contains(&ch)) {
+        0
+    } else if c.is_new {
+        1
+    } else {
+        2
+    }
+}
+
+/// 从已排好序的候选里挑 `limit` 个（0 = 不限），尽量不让同批词共用一个字。
+///
+/// 逐档取词：高优先级先占满名额，只有同一档里词数超过名额时才做取舍——
+/// 先贪心挑「和已选词没有共同字」的，凑不满再按原顺序把同档剩下的补上。
+/// 结果保持入参顺序，随机性和连字顺序都不会被挑词打乱。
+fn pick_diverse(candidates: Vec<Candidate>, limit: usize, weak: &HashSet<char>) -> Vec<Candidate> {
+    if limit == 0 || candidates.len() <= limit {
+        return candidates;
+    }
+    let mut out = Vec::with_capacity(limit);
+    let mut used: HashSet<char> = HashSet::new();
+    let mut left = limit;
+    let mut start = 0;
+    while start < candidates.len() && left > 0 {
+        let tier = tier_of(&candidates[start], weak);
+        let mut end = start;
+        while end < candidates.len() && tier_of(&candidates[end], weak) == tier {
+            end += 1;
+        }
+        let take = left.min(end - start);
+        out.extend(select_in_tier(&candidates[start..end], take, &mut used));
+        left -= take;
+        start = end;
+    }
+    out
+}
+
+/// 同一档内挑 `take` 个：先挑字不冲突的，不够再按原顺序补齐
+fn select_in_tier(segment: &[Candidate], take: usize, used: &mut HashSet<char>) -> Vec<Candidate> {
+    let mut taken = vec![false; segment.len()];
+    // 本轮已经用掉的字（含前几档的），边挑边并，保证同批不撞字
+    let mut seen = used.clone();
+    let mut count = 0;
+    for (i, c) in segment.iter().enumerate() {
+        if count == take {
+            break;
+        }
+        let chars = sampler::char_set(&c.text);
+        if chars.is_disjoint(&seen) {
+            seen.extend(chars);
+            taken[i] = true;
+            count += 1;
+        }
+    }
+    if count < take {
+        for (i, _) in segment.iter().enumerate() {
+            if count == take {
+                break;
+            }
+            if !taken[i] {
+                taken[i] = true;
+                count += 1;
+            }
+        }
+    }
+    // 选中的字全部计入已用：下一档挑词时也要避开
+    for (i, c) in segment.iter().enumerate() {
+        if taken[i] {
+            used.extend(sampler::char_set(&c.text));
+        }
+    }
+    segment
+        .iter()
+        .zip(taken)
+        .filter(|(_, hit)| *hit)
+        .map(|(c, _)| c.clone())
+        .collect()
 }
 
 /// 历次批改里标过「不会写」的字（跨词聚合）。
@@ -702,6 +772,62 @@ mod tests {
         // 下一场只抽 2 个：含「天」的两个词排在「月亮」前面
         let second = create(&conn, &[g.id], Scope::All, 2, false).unwrap();
         assert_eq!(texts_of(&conn, second), vec!["春天", "天空"]);
+    }
+    fn cand(text: &str, is_new: bool) -> Candidate {
+        Candidate { word_id: 0, text: text.to_string(), group_id: 1, is_new }
+    }
+
+    fn texts_of_cands(picked: &[Candidate]) -> Vec<String> {
+        picked.iter().map(|c| c.text.clone()).collect()
+    }
+
+    #[test]
+    fn batch_prefers_distinct_chars() {
+        let weak: HashSet<char> = HashSet::new();
+        let list = vec![
+            cand("春天", true),
+            cand("天空", true),
+            cand("月亮", true),
+            cand("书包", true),
+        ];
+        // 天空和春天共用「天」，名额 3 时换成月亮、书包
+        let picked = pick_diverse(list, 3, &weak);
+        assert_eq!(texts_of_cands(&picked), vec!["春天", "月亮", "书包"]);
+    }
+
+    #[test]
+    fn batch_falls_back_when_chars_run_out() {
+        let weak: HashSet<char> = HashSet::new();
+        let list = vec![cand("春天", true), cand("天空", true), cand("今天", true)];
+        // 三个词都带「天」，第二轮按原顺序补，不能少抽
+        let picked = pick_diverse(list, 2, &weak);
+        assert_eq!(texts_of_cands(&picked), vec!["春天", "天空"]);
+    }
+
+    #[test]
+    fn diversity_keeps_priority_tiers() {
+        let weak: HashSet<char> = "天".chars().collect();
+        // 已按档排好：两个含「天」的弱字词在前，两个无关的新词在后
+        let list = vec![
+            cand("春天", false),
+            cand("天空", false),
+            cand("月亮", true),
+            cand("书包", true),
+        ];
+        let picked = pick_diverse(list, 3, &weak);
+        assert_eq!(
+            texts_of_cands(&picked),
+            vec!["春天", "天空", "月亮"],
+            "同档词不够时宁可重复字，也不能跳过弱字词去凑不重复"
+        );
+    }
+
+    #[test]
+    fn no_limit_keeps_every_candidate() {
+        let weak: HashSet<char> = HashSet::new();
+        let list = vec![cand("春天", true), cand("天空", true)];
+        assert_eq!(pick_diverse(list.clone(), 0, &weak).len(), 2);
+        assert_eq!(pick_diverse(list, 5, &weak).len(), 2);
     }
 
     #[test]

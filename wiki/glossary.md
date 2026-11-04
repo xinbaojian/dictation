@@ -24,6 +24,7 @@ related: [data-model.md, quiz-flow.md]
 | 范围 | 抽题过滤：全部 / 仅未掌握 / 错题本 | `domain::Scope` |
 | 弱字 | 批改时点过「不会写」的字，跨词共享：错「春天」的「天」，「天空」也算弱 | `session_items.wrong_chars` → `weak_chars` |
 | 抽词优先级 | 建会话时的档位排序：含弱字 > 新词 > 其余 | `repo::sessions::prioritize` |
+| 同批去重 | 一场默写里尽量不共用一个字（只在同一档内取舍） | `repo::sessions::pick_diverse` |
 | 专项默写 | 只从错题本抽题的一轮 | `mode='mistake'` |
 | 复习单 | 打印出来的 A4 田字格纸 | `PrintSheet.tsx` |
 | 默写单 / 抄写单 | 打印单的两种形态：不含词语 / 含词语 | `showWord` |

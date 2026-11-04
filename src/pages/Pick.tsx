@@ -16,7 +16,7 @@ const SCOPES: { value: Scope; title: string; desc: string }[] = [
   { value: "mistake", title: "错题本", desc: "只抽标记为错的词" },
 ];
 
-const LIMITS = [10, 20, 30, 0];
+const LIMITS = [5, 10, 15, 20, 25, 30, 0];
 
 export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
   const [groups, setGroups] = useState<Group[]>([]);
@@ -369,7 +369,7 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
               {count > 0 && limit > 0 && count > limit ? "，本次抽 " + effectiveLimit + " 个" : ""}
             </p>
             <p className="mt-0.5 text-xs text-stone-400">
-              {chainByChar ? "顺序随机，下一个词优先和上一个词有相同的字" : "顺序随机"}，抽完自动进入批改
+              同批词尽量不重复用字，{chainByChar ? "下一个词优先和上一个词有相同的字" : "顺序随机"}，抽完自动进入批改
             </p>
           </div>
           <button

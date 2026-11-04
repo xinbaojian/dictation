@@ -117,8 +117,8 @@ pub fn collect(conn: &Connection, group_ids: &[i64], scope: Scope) -> AppResult<
     Ok(out)
 }
 
-/// 词语里的字集合，用于「连字」判断（空白不算字）
-fn char_set(text: &str) -> HashSet<char> {
+/// 词语里的字集合，用于「连字」判断与同批去重（空白不算字）
+pub(crate) fn char_set(text: &str) -> HashSet<char> {
     text.chars().filter(|c| !c.is_whitespace()).collect()
 }
 

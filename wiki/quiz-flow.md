@@ -13,7 +13,7 @@ related: [data-model.md, decisions.md]
 2. 过滤分组（`group_ids` 为空 = 全部分组，错题专项常用）
 3. 过滤范围：`all` 全要 / `unlearned` 排除 mastered / `mistake` 只要 learning
 4. **跨组按 text 去重**，保留排序靠前的那条
-5. 排序：默认 `rand` Fisher–Yates 洗牌；开了设置项 `chainByChar` 则走 `sampler::chain_by_shared_char`（打散后每一步优先挑和上一个词有相同字的词）→ 截取前 N（N=0 表示全部）
+5. 排序：默认 `rand` Fisher–Yates 洗牌；开了设置项 `chainByChar` 则走 `sampler::chain_by_shared_char`（打散后每一步优先挑和上一个词有相同字的词）。截取题量在建会话时完成，`collect` 只负责顺序
 
 候选为空时返回带病因的中文提示（"错题本里还没有词…"等），不是干巴巴的报错。
 
@@ -22,6 +22,7 @@ related: [data-model.md, decisions.md]
 - 候选池 = `sampler::collect` 的全部结果（范围过滤 + 跨组按文本去重）。
 - **抽题优先级**（`sessions::prioritize`，稳定排序，同档内保留洗牌顺序）：① 含历次批改里标过「不会写」的字的词 → ② 新词（`status='new'`）→ ③ 其余已练过的词。弱字来自 `session_items.wrong_chars`，跨词聚合：标错「春天」的「天」，下一场的「天空」「今天」也会被提前；只在批改时点过具体字才算，整词算错没有位置信息，不参与
 - **最近一场**（`finished` / `reviewing` / `abandoned`）出现过的词语文本只在**同档内排到最后**，不从池子里删（不是 word_id——同一个词分在两个组是两条记录，按 text 才算真去重）。删掉会让「题量 20」在 20 个词的分组里只抽出 10 个，用户会以为题量没生效；词不够时宁可重复也要抽满题量。错题本范围（`mistake`）不做这个排序
+- **同批去重**（`sessions::pick_diverse`）：题量小于候选数时逐档挑词，同一档内优先挑「和已选词没有共同字」的，凑不满再按原顺序补；结果保持入参顺序（洗牌/连字的随机性不变）。跨档不重挑——含弱字的词本身就会共享那个字，所以这是「尽量」，不是硬约束
 - 错题本范围（`mistake`）不排除：上次错的词正是这次要练的
 - `count_candidates` 也走 `sampler::collect`，所以「可抽 N 词」就是所选范围内的词数
 - 前端：有未完成会话时点「开始默写」会弹 `ConfirmModal`（继续 / 放弃并重开 / 取消），不再静默新建第二场，避免上一场刚写的词又抽一遍

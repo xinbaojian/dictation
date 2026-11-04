@@ -27,7 +27,7 @@ related: [architecture.md, decisions.md]
 
 | 页面 | 文件 | 关键点 |
 |---|---|---|
-| 抽题配置 | `pages/Pick.tsx` | 分组多选、范围、题量、可抽数量（120ms 防抖）；顶部「继续上次」横幅 |
+| 抽题配置 | `pages/Pick.tsx` | 分组多选、范围、题量（5 / 10 / 15 / 20 / 25 / 30 / 全部）、可抽数量（120ms 防抖）；顶部「继续上次」横幅 |
 | 默写 | `pages/Quiz.tsx` | 进入即自动显示、到点遮罩、键盘快捷键、进度落库、`advancing` 锁 |
 | 批改 | `pages/Review.tsx` | 网格点错、`skip_marked` 预置、提交后 0.9s 跳转 |
 | 错题本 | `pages/Mistakes.tsx` | 分组筛选、连对进度条（读设置）、专项默写、打印 |
