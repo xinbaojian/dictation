@@ -1,6 +1,6 @@
 ---
 title: 默写流程与状态流转
-updated: 2026-10-26
+updated: 2026-11-04
 tags: [flow, domain]
 related: [data-model.md, decisions.md]
 ---
@@ -19,7 +19,9 @@ related: [data-model.md, decisions.md]
 
 ## 二、建会话（`repo/sessions.rs::create`）
 
-- 候选池 = `sampler::collect` 的全部结果（范围过滤 + 跨组按文本去重）。**最近一场**（`finished` / `reviewing` / `abandoned`）出现过的词语文本只**排到池子后面**，不从池子里删（不是 word_id——同一个词分在两个组是两条记录，按 text 才算真去重）。删掉会让「题量 20」在 20 个词的分组里只抽出 10 个，用户会以为题量没生效；词不够时宁可重复也要抽满题量。错题本范围（`mistake`）不做这个排序
+- 候选池 = `sampler::collect` 的全部结果（范围过滤 + 跨组按文本去重）。
+- **抽题优先级**（`sessions::prioritize`，稳定排序，同档内保留洗牌顺序）：① 含历次批改里标过「不会写」的字的词 → ② 新词（`status='new'`）→ ③ 其余已练过的词。弱字来自 `session_items.wrong_chars`，跨词聚合：标错「春天」的「天」，下一场的「天空」「今天」也会被提前；只在批改时点过具体字才算，整词算错没有位置信息，不参与
+- **最近一场**（`finished` / `reviewing` / `abandoned`）出现过的词语文本只在**同档内排到最后**，不从池子里删（不是 word_id——同一个词分在两个组是两条记录，按 text 才算真去重）。删掉会让「题量 20」在 20 个词的分组里只抽出 10 个，用户会以为题量没生效；词不够时宁可重复也要抽满题量。错题本范围（`mistake`）不做这个排序
 - 错题本范围（`mistake`）不排除：上次错的词正是这次要练的
 - `count_candidates` 也走 `sampler::collect`，所以「可抽 N 词」就是所选范围内的词数
 - 前端：有未完成会话时点「开始默写」会弹 `ConfirmModal`（继续 / 放弃并重开 / 取消），不再静默新建第二场，避免上一场刚写的词又抽一遍
@@ -45,7 +47,7 @@ related: [data-model.md, decisions.md]
 ## 四、批改（`pages/Review.tsx` → `repo/sessions.rs::submit_review`）
 
 1. 前端默认全对，`skip_marked` 的词预置为错
-2. 标错后可再点词里的具体字，记录「不会写的字」下标（空 = 整词错）；仅用于复盘，不影响错题本粒度
+2. 标错后可再点词里的具体字，记录「不会写的字」下标（空 = 整词错）；用于复盘高亮与下一轮的抽词弱字池（ADR-14），不影响错题本粒度
 2. 提交时逐条写 `result`，并调用 `word_progress::mark_wrong / mark_correct`
 3. 会话落 `status='finished'`、`wrong_total`、`finished_at`
 4. 返回 `{ wrong, correct, graduated }`，`graduated` 是本次移出错题本的词数，前端直接提示

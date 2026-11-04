@@ -119,6 +119,8 @@ pub fn create(
     } else {
         last_practiced_texts(conn)?
     };
+    // 历次批改里点过「不会写」的字，用来把含这些字的词提前
+    let weak = weak_chars(conn)?;
     if shuffle {
         let mut rng = rand::thread_rng();
         candidates = if settings::load(conn)?.chain_by_char {
@@ -129,9 +131,10 @@ pub fn create(
             candidates
         };
     }
-    // 上一场刚默写过的词只往后排，不从池子里删：删掉会让「题量 20」在 20 个词的分组里
-    // 只抽出 10 个，看起来像题量没生效；词不够时宁可重复也要凑够用户选的题量。
-    let mut candidates = fresh_first(candidates, &practiced);
+    // 排序优先级：含写错过的字 > 新词 > 其余；同一档内保持打散后的顺序。
+    // 上一场刚默写过的词只在本档内往后排，不从池子里删：删掉会让「题量 20」在 20 个词的
+    // 分组里只抽出 10 个，看起来像题量没生效；词不够时宁可重复也要凑够用户选的题量。
+    let mut candidates = prioritize(candidates, &weak, &practiced);
     if limit > 0 {
         candidates.truncate(limit as usize);
     }
@@ -148,19 +151,58 @@ pub fn create(
     insert(conn, mode, &config, &word_ids)
 }
 
-/// 把「最近一场」已经默写过的词挪到后面，保留在池子里。
+/// 抽词排序：先按档位，再按「最近一场刚写过」。
 ///
-/// 匹配按**词语文本**而不是 word_id：同一个词写在两个分组里是两条记录，
+/// 档位：0 = 含历次批改里标错的字，1 = 新词（没默写过），2 = 其余已练过的词。
+/// 用稳定排序，所以同一档内保留入参顺序（洗过牌就是随机，没洗就是词表顺序），
+/// 不会把随机性排没。只排序不过滤——过滤会让可抽数量凭空变少，用户选的题量就对不上了。
+///
+/// 「最近一场」匹配按**词语文本**而不是 word_id：同一个词写在两个分组里是两条记录，
 /// 上一场抽到 A 组的「春天」，这一场抽到 B 组的「春天」其实还是同一个词。
+fn prioritize(
+    mut candidates: Vec<Candidate>,
+    weak: &HashSet<char>,
+    practiced: &HashSet<String>,
+) -> Vec<Candidate> {
+    candidates.sort_by_key(|c| {
+        let tier = if c.text.chars().any(|ch| weak.contains(&ch)) {
+            0u8
+        } else if c.is_new {
+            1
+        } else {
+            2
+        };
+        (tier, practiced.contains(&c.text))
+    });
+    candidates
+}
+
+/// 历次批改里标过「不会写」的字（跨词聚合）。
 ///
-/// 只排序不过滤——过滤会让可抽数量凭空变少，用户选的题量就对不上了。
-fn fresh_first(candidates: Vec<Candidate>, practiced: &HashSet<String>) -> Vec<Candidate> {
-    if practiced.is_empty() {
-        return candidates;
+/// 只认批改时点出的具体字：整词算错的条目 wrong_chars 为空，没有位置信息，跳过。
+/// 词条后来被改短的话老下标会越界，直接丢掉，避免把别的字当成弱字。
+fn weak_chars(conn: &Connection) -> AppResult<HashSet<char>> {
+    let mut stmt = conn.prepare(
+        "SELECT w.text, i.wrong_chars
+         FROM session_items i
+         JOIN words w ON w.id = i.word_id
+         WHERE i.result = 'wrong' AND i.wrong_chars <> ''",
+    )?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+    let mut out = HashSet::new();
+    for row in rows {
+        let (text, raw) = row?;
+        let chars: Vec<char> = text.chars().collect();
+        for idx in parse_char_indices(&raw) {
+            let Some(ch) = usize::try_from(idx).ok().and_then(|i| chars.get(i)) else {
+                continue;
+            };
+            if !ch.is_whitespace() {
+                out.insert(*ch);
+            }
+        }
     }
-    let (fresh, done): (Vec<_>, Vec<_>) =
-        candidates.into_iter().partition(|c| !practiced.contains(&c.text));
-    fresh.into_iter().chain(done).collect()
+    Ok(out)
 }
 
 /// 最近一场（已批改 / 待批改 / 已放弃）默写出现过的词语文本
@@ -619,6 +661,47 @@ mod tests {
         let second = create(&conn, &[g.id], Scope::All, 2, false).unwrap();
         let rest = texts_of(&conn, second);
         assert_eq!(rest, vec!["秋天", "冬天"]);
+    }
+    #[test]
+    fn new_words_come_before_mastered_ones() {
+        let conn = db::open_memory();
+        let g = groups::create(&conn, None, "1", "第一单元").unwrap();
+        for w in ["春天", "夏天", "秋天"] {
+            words::add(&conn, g.id, w, None).unwrap();
+        }
+
+        // 第一场把「春天」「夏天」练成熟词，「秋天」还是新词
+        let first = create(&conn, &[g.id], Scope::All, 2, false).unwrap();
+        finish_quiz(&conn, first).unwrap();
+        submit_review(&conn, first, &[]).unwrap();
+
+        let second = create(&conn, &[g.id], Scope::All, 1, false).unwrap();
+        assert_eq!(texts_of(&conn, second), vec!["秋天"], "新词应优先于已会词");
+    }
+
+    #[test]
+    fn words_with_weak_chars_are_sampled_first() {
+        let conn = db::open_memory();
+        let g = groups::create(&conn, None, "1", "第一单元").unwrap();
+        for w in ["春天", "天空", "月亮"] {
+            words::add(&conn, g.id, w, None).unwrap();
+        }
+
+        // 批改时标出「春天」的「天」不会写
+        let first = create(&conn, &[g.id], Scope::All, 0, false).unwrap();
+        finish_quiz(&conn, first).unwrap();
+        let spring = get(&conn, first)
+            .unwrap()
+            .items
+            .into_iter()
+            .find(|i| i.text == "春天")
+            .unwrap()
+            .id;
+        submit_review(&conn, first, &[WrongMark { item_id: spring, chars: vec![1] }]).unwrap();
+
+        // 下一场只抽 2 个：含「天」的两个词排在「月亮」前面
+        let second = create(&conn, &[g.id], Scope::All, 2, false).unwrap();
+        assert_eq!(texts_of(&conn, second), vec!["春天", "天空"]);
     }
 
     #[test]

@@ -39,6 +39,8 @@ pub struct Candidate {
     pub word_id: i64,
     pub text: String,
     pub group_id: i64,
+    /// 还没默写过（status = 'new'），抽题时优先
+    pub is_new: bool,
 }
 
 /// 候选词集合。
@@ -93,8 +95,9 @@ pub fn collect(conn: &Connection, group_ids: &[i64], scope: Scope) -> AppResult<
 
     let mut seen: HashSet<String> = HashSet::new();
     let mut out = Vec::new();
-    for row in rows {
-        let (word_id, text, group_id, status) = row?;
+        for row in rows {
+            let (word_id, text, group_id, status) = row?;
+            let is_new = status == "new";
         if !group_ids.is_empty() && !group_ids.contains(&group_id) {
             continue;
         }
@@ -109,7 +112,7 @@ pub fn collect(conn: &Connection, group_ids: &[i64], scope: Scope) -> AppResult<
         if !seen.insert(text.clone()) {
             continue;
         }
-        out.push(Candidate { word_id, text, group_id });
+        out.push(Candidate { word_id, text, group_id, is_new });
     }
     Ok(out)
 }
@@ -236,7 +239,7 @@ mod tests {
     }
 
     fn cand(text: &str, id: i64) -> Candidate {
-        Candidate { word_id: id, text: text.to_string(), group_id: 1 }
+        Candidate { word_id: id, text: text.to_string(), group_id: 1, is_new: true }
     }
 
     /// 4 个词共享「天」，1 个孤立词。连字后 4 个共享词必须连续，

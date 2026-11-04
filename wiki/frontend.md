@@ -1,6 +1,6 @@
 ---
 title: 前端结构
-updated: 2026-10-25
+updated: 2026-11-04
 tags: [frontend, react]
 related: [architecture.md, decisions.md]
 ---
@@ -55,6 +55,8 @@ related: [architecture.md, decisions.md]
 
 ## 容易忘的
 
-Quiz 进入每个词会 `setRevealed(true)`，再由 `[revealed, settings, index]` 的定时器到点遮罩；`maskSeconds = 0` 表示一直显示。批改页的错字标记是 `Map<itemId, Set<字下标>>`，空集合 = 整词错。
+Quiz 进入每个词会 `setRevealed(true)`，再由 `[revealed, settings, index]` 的定时器到点遮罩；`maskSeconds = 0` 表示一直显示。卡片下方用 `items.slice(0, index)` 小字列出已默写的词，纯展示，不落库。批改页的错字标记是 `Map<itemId, Set<字下标>>`，空集合 = 整词错。
 
 词表分组树的拖放（`Wordbook.tsx`）：行上中下三段分别是「变子分组 / 排到前面 / 排到后面」，`zoneOf` 按 `clientY` 与行高的比例切；`targetFor` 负责把落点翻译成 `(parentId, beforeId)` 并挡掉「拖进自己的子孙」，所以非法落点连 `preventDefault` 都不做——不给假的可落点反馈。落点只是渲染态，真正的结构变更全在 `move_group` 里，前端拿到返回的新树直接替换 `groups`。
+
+分组树默认全部折叠：`collapsed` 只在首次加载后按 `hasChildren` 初始化一次（`Wordbook.tsx` 的初始 `useEffect`）。`refreshGroups` 在新建/编辑/删除后也会调用，把初始化挪进去会重置用户的展开状态。新建子分组、拖进折叠分组仍会自动展开父级。

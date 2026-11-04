@@ -1,6 +1,6 @@
 ---
 title: 数据模型
-updated: 2026-10-25
+updated: 2026-11-04
 tags: [database, sqlite]
 related: [quiz-flow.md, architecture.md]
 ---
@@ -60,7 +60,7 @@ related: [quiz-flow.md, architecture.md]
 | `seq` | 1-based 抽取顺序，展示与复盘用 |
 | `skip_marked` | 默写时家长点了「不会」，批改页默认标错 |
 | `result` | `pending` / `correct` / `wrong` |
-| `wrong_chars` | 批改时标出的「不会写的字」下标（逗号分隔、已排序去重），空串 = 整词算错。**只用于复盘展示**，错题本与重默仍按整词 |
+| `wrong_chars` | 批改时标出的「不会写的字」下标（逗号分隔、已排序去重），空串 = 整词算错。用于复盘高亮与抽词弱字池（ADR-14）；错题本与出本仍按整词 |
 
 双唯一索引：`UNIQUE(session_id, seq)`、`UNIQUE(session_id, word_id)`。
 
@@ -75,6 +75,7 @@ related: [quiz-flow.md, architecture.md]
 3. `sessions.total = COUNT(session_items)`，建会话时一次性写入
 4. 只有 `word_progress.rs` 能改 `status / wrong_count / correct_streak`
 5. `current_seq` ∈ [0, total]，表示「已完成多少个」
+6. 抽题只**排序**（优先级 + 上一场排后），不删候选——任何过滤都会让题量抽不满
 
 ## 迁移策略
 

@@ -1,6 +1,6 @@
 ---
 title: 踩坑记录
-updated: 2026-10-25
+updated: 2026-11-04
 tags: [pitfalls]
 related: [testing.md, architecture.md]
 ---
@@ -110,3 +110,13 @@ Makefile 里写 `SHELL := /bin/bash` 对 Windows 版 make **无效**：它只认
 - **不要**用 `C:\Windows\System32\bash.exe` 或 `WindowsApps\bash.exe`：那是 WSL 的，`D:/...` 这类路径语义完全不同
 
 排查手法：`make` 里加一句 `@echo "SHELL=$(SHELL)"`，正常应打印 bash 路径；打印 `sh.exe` 或空就是没生效。
+
+## 15. 抽词优先级：先洗牌，再做稳定排序
+
+「写错过的字 → 新词 → 其余」只是 `sessions::prioritize` 里的一次 `sort_by_key`，三条红线：
+
+- 必须**稳定排序**（`sort_by_key`）。换成 `sort_unstable_by_key` 会把同档内洗好的随机顺序打乱，每次抽题变成固定顺序
+- 必须排在洗牌之后。先排序再洗牌等于优先级白做
+- **不许改成 `filter`**（只留高优先级词）。可抽数量会凭空变少，「题量 20」在 20 个词的分组里可能只抽出 10 个，用户会以为题量设置失效
+
+弱字池来自 `session_items.wrong_chars`（逗号分隔的字符下标），解析时一定按 `text.chars()` 的字符下标取，不能按字节；词条改短后越界下标要丢掉，否则会提前一个不相干的字。
