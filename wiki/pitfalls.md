@@ -1,6 +1,6 @@
 ---
 title: 踩坑记录
-updated: 2026-11-04
+updated: 2026-11-05
 tags: [pitfalls]
 related: [testing.md, architecture.md]
 ---
@@ -125,3 +125,45 @@ Makefile 里写 `SHELL := /bin/bash` 对 Windows 版 make **无效**：它只认
 ## 16. 手工错字挂在词条上，改词必须清空
 
 `words.wrong_chars` 是「当前词条」的错字下标，改文本时不清空就会高亮到别的字（`words::update` 已处理）。它和批改记录 `session_items.wrong_chars` 是两处来源：列表展示、弱字池、备份都要取并集，只读一处会漏掉另一种。
+
+## 17. macOS 上 dmg 打包失败：bundle_dmg.sh 找不到临时挂载卷
+
+现象：`npm run tauri -- build --bundles dmg`（含 `make` / `make dmg`）在本机 release 编译与 `Dictation.app` 都成功，最后一步 `bundle_dmg.sh` 报 9 次 `grep: bad regex '/dev/disk8s': brackets ([ ]) not balanced`，再报 `interstitial disk image was not found`。稳定复现，重试无效。
+
+- **原因**：`@tauri-apps/cli` 自带的 `bundle_dmg.sh`（生成在 `target/release/bundle/dmg/`）里 `find_mount_dir` 靠 `grep -E "${DEV_NAME}s"` 从 `hdiutil info` 里找挂载点；本机 hdiutil 已把 `create / resize / attach` 标为 deprecated 且输出格式有变，这一步解析不到卷
+- **与图标和项目代码无关**：`.app` 本身完好，`Contents/Resources/icon.icns` 与 `src-tauri/icons/icon.icns` 逐像素一致，`Info.plist::CFBundleIconFile` 指向它
+- **失败会留垃圾**：一个挂载卷 `/Volumes/dmg.XXXXXX` + `bundle/macos/rw.<pid>.*.dmg`。先 `hdiutil detach /Volumes/dmg.XXXXXX`，再删 `rw.*.dmg`，不清理会污染下次构建
+- **临时绕过**：只出 `.app` 用 `--bundles app`；dmg 交给 GitHub Actions 的 macOS runner，或升级 CLI 后再验。别手改 `target/` 里那个脚本，下次构建会被覆盖
+
+## 18. 改 bundle identifier 会换掉整个数据目录
+
+`tauri.conf.json` 的 `identifier` 不只是 macOS 的 `CFBundleIdentifier`：Tauri 的 `app_data_dir()` 直接把它当最后一级目录名（`~/Library/Application Support/<identifier>` / `%APPDATA%\<identifier>`）。为修掉「identifier 以 `.app` 结尾」的构建警告，把 `com.dictation.app` 改成 `com.dictation.desktop` 后，老用户的新目录是空的，看起来像数据全丢了。
+
+**做法**：`db/mod.rs::migration_sources` 把旧 identifier 目录排在迁移源第一位，`init` 在「没库 + 没 marker」时把 `dictation.db`（含 WAL/SHM）和 `backups/` 一起复制到新目录；只复制、不覆盖、不删旧文件，可回退。以后**不要再改 identifier**；真要改，得把新名字同时加进迁移源，并保持一次性迁移的语义（见第 12 条）。
+
+## 19. macOS 上 cargo test 编不过：测试引用了被 cfg 裁掉的函数
+
+`is_writable` 带 `#[cfg(not(target_os = "macos"))]`（macOS 根本不走便携目录分支），但 `writable_dir_is_used` 测试没加同样的 cfg，macOS 上直接报 `E0425: cannot find function is_writable`。Windows 上正常，所以很容易漏。
+
+**做法**：平台专属函数的测试加同名 cfg；macOS 分支另补一个断言 `resolve_dir` 恒返回 `app_data_dir` 的测试，两边都有覆盖。
+
+## 20. GitHub 自动生成的 Release Notes 里没有 commit message
+
+现象：`make release v0.2.1` 发出来后，Release 说明只剩一行 `**Full Changelog**: v0.2.0...v0.2.1`，明明区间内有 3 个提交却一条都没列。
+
+- **原因**：`generate_release_notes: true` 只汇总**合并过的 Pull Request**（按 PR 标签分类），直接 push 的 commit 一律不列；本仓库全靠直接 push。新建 `.github/release.yml` 配 `changelog.categories` 也没用——那份配置只管 PR 的分类与排除
+- **做法**：`.github/workflows/release.yml` 的 `release` job 改用 `scripts/gen-release-notes.mjs` 自己 `git log <上一个 tag>..<tag>` 整理正文，按 `feat/fix/ci/docs/其他` 分组、过滤 `chore: release` 噪音提交，再用 `body_path` 发布
+- **配套**：`actions/checkout@v4` 必须带 `fetch-depth: 0`。tag 触发的默认浅克隆只有 1 个 commit，`git describe --tags --abbrev=0 <tag>^` 找不到上一个 tag
+- **别漏**：改完脚本或 workflow 要先提交推送再打 tag，`make release` 只 `git add` 那 5 个版本号文件
+
+详见 [release.md](./release.md)。
+
+## 21. 加了自动升级后，Windows 便携版升级会「丢数据」
+
+`make install` 部署的是裸 `dictation.exe`，按硬约束第 7 条数据目录在 exe 同级；而 updater 下载的是
+NSIS 安装包，装到 `Program Files` 后数据目录会回落到 `%APPDATA%\com.dictation.desktop`，旧库不在那儿，
+用户看到的是空词表（数据其实没被删）。
+
+**做法**：升级前在「设置 → 数据与备份」导出备份，装完再导入；不要改 updater 去指向便携版 exe
+（没有签名产物、也没有安装流程）。macOS 数据目录恒在 `~/Library/Application Support/com.dictation.desktop`，
+不受影响。密钥与清单的其它坑见 [updater.md](./updater.md)。

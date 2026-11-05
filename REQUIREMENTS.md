@@ -243,7 +243,7 @@ CREATE TABLE settings (
 | 类别 | 要求 |
 |---|---|
 | 离线 | 完全离线，无网络请求、无遥测、无自动更新（V1） |
-| 数据位置 | Tauri `app_data_dir` 下 `dictation.db`（Windows: %APPDATA%\com.dictation.app\） |
+| 数据位置 | Tauri `app_data_dir` 下 `dictation.db`（Windows: %APPDATA%\com.dictation.desktop\，macOS: ~/Library/Application Support/com.dictation.desktop\） |
 | 数据安全 | 启动时若存在 `running` / `reviewing` 会话则提示恢复；备份为**手动**导出 JSON（V1 不做自动备份） |
 | 性能 | 5000 词内：启动 < 1s，抽题 < 50ms，页面切换无卡顿 |
 | 可靠性 | 写操作走事务；迁移用 `PRAGMA user_version` 递增，升级不丢数据 |

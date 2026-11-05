@@ -29,6 +29,8 @@ impl AppState {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // 更新端点与公钥在 tauri.conf.json；离线时只在前端主动 check 才会联网
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let (conn, data_dir) = db::init(app.handle())?;
             app.manage(AppState {
@@ -71,6 +73,8 @@ pub fn run() {
             commands::system::import_backup,
             commands::system::open_data_dir,
             commands::system::data_dir_path,
+            commands::system::app_version,
+            commands::system::restart_app,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");

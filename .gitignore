@@ -6,3 +6,9 @@ src-tauri/target
 *.db-shm
 .DS_Store
 .workbuddy-ai/
+# 本机工作记录（memory 日志），不是项目代码
+.workbuddy/
+# updater 签名私钥（只放本机 ~/.tauri/ 与 GitHub Secrets，绝不提交）
+*.key
+.env
+.env.*

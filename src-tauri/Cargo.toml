@@ -3,7 +3,8 @@ name = "dictation"
 version = "0.2.1"
 description = "生词默写提问小工具"
 edition = "2021"
-rust-version = "1.77"
+# tauri-plugin-updater 要求 Rust >= 1.90
+rust-version = "1.90"
 
 [lib]
 name = "dictation_lib"
@@ -20,6 +21,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 thiserror = "2"
 rand = "0.8"
 tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
 
 [profile.release]
 codegen-units = 1

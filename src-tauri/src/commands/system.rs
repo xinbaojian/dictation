@@ -57,3 +57,15 @@ pub fn open_data_dir(state: State<'_, AppState>) -> AppResult<()> {
 pub fn data_dir_path(state: State<'_, AppState>) -> String {
     state.data_dir.to_string_lossy().to_string()
 }
+
+/// 当前程序版本号，与 Cargo.toml / tauri.conf.json 由 publish 流程同步（scripts/bump-version.mjs）
+#[tauri::command]
+pub fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// 安装完更新后重启应用。restart() 会立刻结束当前进程，前端 invoke 收不到返回值属正常。
+#[tauri::command]
+pub fn restart_app(app: tauri::AppHandle) {
+    app.restart();
+}

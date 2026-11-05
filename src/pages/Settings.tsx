@@ -3,6 +3,7 @@ import ConfirmModal from "../components/ConfirmModal";
 import { Toast, useNotice } from "../components/Toast";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorMessage } from "../lib/ipc";
+import type { UpdaterController } from "../lib/updater";
 import type { BackupInfo, Settings as SettingsType } from "../types";
 
 const MASK_OPTIONS = [
@@ -20,7 +21,17 @@ const FONT_OPTIONS = [
   { value: 128, label: "超大" },
 ];
 
-export default function Settings() {
+function formatBytes(n: number): string {
+  if (n < 1024 * 1024) return Math.max(1, Math.round(n / 1024)) + " KB";
+  return (n / 1024 / 1024).toFixed(1) + " MB";
+}
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("zh-CN");
+}
+
+export default function Settings({ updater }: { updater: UpdaterController }) {
   const [value, setValue] = useState<SettingsType | null>(null);
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [dataDir, setDataDir] = useState("");
@@ -28,6 +39,8 @@ export default function Settings() {
   const [importing, setImporting] = useState<{ name: string; path: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const { notice, notify } = useNotice();
+  const u = updater.state;
+  const updateBusy = u.phase === "checking" || u.phase === "downloading" || u.phase === "installing";
 
   useEffect(() => {
     (async () => {
@@ -282,6 +295,98 @@ export default function Settings() {
           </div>
           <p className="mt-3 text-[11px] leading-relaxed text-stone-400">
             导入是合并而非覆盖：同编号同名的分组视为同一个，已存在的词跳过，不影响现有进度。
+          </p>
+        </section>
+
+        <section className="mt-5 rounded-xl border border-stone-200 bg-white p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-medium text-stone-700">版本与更新</h2>
+              <p className="mt-1 text-xs text-stone-500">
+                当前版本 v{u.currentVersion || "…"} · 新版本发布在 GitHub Release，安装包会先校验签名再安装
+              </p>
+            </div>
+            <button
+              onClick={() => void updater.checkForUpdate()}
+              disabled={updateBusy || u.phase === "dev"}
+              className="shrink-0 rounded-md border border-stone-200 px-3 py-1.5 text-xs text-stone-600 hover:bg-stone-50 disabled:opacity-50"
+            >
+              {u.phase === "checking" ? "检查中…" : "检查更新"}
+            </button>
+          </div>
+
+          {u.phase === "dev" && (
+            <p className="mt-3 text-xs text-stone-500">开发模式不检查更新；打包后的程序每次启动会自动检查一次。</p>
+          )}
+          {u.phase === "idle" && (
+            <p className="mt-3 text-xs text-stone-500">
+              {u.message || "暂无可用更新；程序每次启动会自动检查一次。"}
+            </p>
+          )}
+          {u.phase === "checking" && <p className="mt-3 text-xs text-stone-500">正在检查 GitHub Release…</p>}
+          {u.phase === "error" && <p className="mt-3 break-all text-xs text-red-600">{u.message}</p>}
+
+          {u.phase === "available" && (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+              <p className="text-sm font-medium text-amber-900">
+                新版本 v{u.version}
+                {u.date && formatDate(u.date) ? " · " + formatDate(u.date) : ""}
+              </p>
+              {u.notes && (
+                <div className="mt-2 max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-amber-800">
+                  {u.notes}
+                </div>
+              )}
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={() => void updater.installUpdate()}
+                  className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700"
+                >
+                  下载并安装
+                </button>
+                <button
+                  onClick={updater.skipVersion}
+                  className="rounded-md border border-amber-200 px-3 py-1.5 text-xs text-amber-800 hover:bg-amber-100"
+                >
+                  忽略此版本
+                </button>
+              </div>
+            </div>
+          )}
+
+          {(u.phase === "downloading" || u.phase === "installing") && (
+            <div className="mt-3">
+              <p className="text-xs text-stone-600">
+                {u.phase === "downloading" ? "正在下载更新包…" : "下载完成，正在校验签名并安装…"}
+              </p>
+              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-stone-100">
+                <div
+                  className="h-full rounded-full bg-stone-700 transition-all"
+                  style={{ width: (u.progress ?? (u.phase === "installing" ? 100 : 0)) + "%" }}
+                />
+              </div>
+              <p className="mt-1 text-[11px] text-stone-400">
+                {u.progress !== null ? u.progress + "% · " : ""}
+                {formatBytes(u.downloaded)}
+                {u.total > 0 ? " / " + formatBytes(u.total) : ""}
+              </p>
+            </div>
+          )}
+
+          {u.phase === "ready" && (
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-green-200 bg-green-50 px-3 py-2">
+              <span className="text-xs text-green-800">{u.message}</span>
+              <button
+                onClick={() => void updater.restart()}
+                className="shrink-0 rounded-md bg-green-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-800"
+              >
+                立即重启
+              </button>
+            </div>
+          )}
+
+          <p className="mt-3 text-[11px] leading-relaxed text-stone-400">
+            学习数据不会上传。检查与下载更新需要联网，离线时程序照常使用；安装前会校验发布包签名。
           </p>
         </section>
       </div>

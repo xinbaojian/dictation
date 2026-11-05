@@ -13,11 +13,11 @@ const MIGRATIONS: &[(i64, &str)] = &[
 ];
 
 pub fn init(app: &AppHandle) -> AppResult<(Connection, PathBuf)> {
-    let legacy_dir = app
+    let app_data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| AppError::msg(format!("无法获取用户数据目录：{e}")))?;
-    let dir = resolve_dir(&legacy_dir);
+    let dir = resolve_dir(&app_data_dir);
     std::fs::create_dir_all(&dir)?;
     let db_path = dir.join("dictation.db");
     let marker = marker_path(&dir);
@@ -25,17 +25,18 @@ pub fn init(app: &AppHandle) -> AppResult<(Connection, PathBuf)> {
     if !db_path.exists() {
         // 库被删掉了但 WAL 还留着时，SQLite 可能把旧页恢复出来，先清掉
         remove_sidecars(&db_path);
-        // 迁移来源：① 旧版用户数据目录；②（macOS）旧版放在 .app 包内的库。
-        // 按序尝试，找到第一个存在的就搬过来。
-        let mut sources: Vec<PathBuf> = vec![legacy_dir.join("dictation.db")];
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(exe_dir) = exe.parent() {
-                sources.push(exe_dir.join("dictation.db"));
-            }
-        }
-        for src in sources {
+        // 迁移来源见 migration_sources：① 旧 bundle identifier 的用户数据目录；
+        // ② 当前用户数据目录（老版本 → 便携目录）；③（macOS）旧版放在 .app 包内的库。
+        // 按序尝试，找到第一个存在的就搬过来，且只搬一次（marker 兜底）。
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        for src in migration_sources(&app_data_dir, exe_dir.as_deref()) {
             if should_adopt(&db_path, &marker, &src) {
                 adopt_legacy(&src, &db_path)?;
+                if let Some(from_dir) = src.parent() {
+                    adopt_backups(from_dir, &dir);
+                }
                 break;
             }
         }
@@ -48,6 +49,56 @@ pub fn init(app: &AppHandle) -> AppResult<(Connection, PathBuf)> {
     Ok((conn, dir))
 }
 
+/// 旧版 bundle identifier。Tauri 直接拿 identifier 当 app_data_dir 的最后一级目录，
+/// 改 identifier 会换数据目录；这里保留旧名，用于把老用户的库一次性搬过来。
+const LEGACY_IDENTIFIER: &str = "com.dictation.app";
+
+/// app_data_dir = <平台数据根>/<identifier>，把末段换成旧 identifier 即可定位老目录。
+/// 这样不用引入 dirs 之类的依赖，macOS / Windows / Linux 都适用。
+fn legacy_identifier_dir(app_data_dir: &Path) -> Option<PathBuf> {
+    app_data_dir
+        .parent()
+        .map(|root| root.join(LEGACY_IDENTIFIER))
+}
+
+/// 迁移来源按「离当前版本越近越优先」排列。
+fn migration_sources(app_data_dir: &Path, exe_dir: Option<&Path>) -> Vec<PathBuf> {
+    let mut sources = Vec::new();
+    if let Some(old) = legacy_identifier_dir(app_data_dir) {
+        if old.as_path() != app_data_dir {
+            sources.push(old.join("dictation.db"));
+        }
+    }
+    sources.push(app_data_dir.join("dictation.db"));
+    if let Some(dir) = exe_dir {
+        sources.push(dir.join("dictation.db"));
+    }
+    sources
+}
+
+/// 备份文件也跟着搬：只补新目录里缺的，绝不覆盖；失败不影响主库启动。
+fn adopt_backups(from_dir: &Path, to_dir: &Path) {
+    if from_dir == to_dir {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(from_dir.join("backups")) else {
+        return;
+    };
+    let dst = to_dir.join("backups");
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let target = dst.join(entry.file_name());
+        if target.exists() {
+            continue;
+        }
+        if std::fs::create_dir_all(&dst).is_err() {
+            return;
+        }
+        let _ = std::fs::copy(entry.path(), target);
+    }
+}
 
 fn marker_path(dir: &Path) -> PathBuf {
     dir.join(".dictation-initialized")
@@ -72,7 +123,8 @@ fn remove_sidecars(db: &Path) {
 ///
 /// macOS 例外：.app 包在更新时会被整体替换，绝不能把数据放在包内的可执行文件
 /// 旁边（Dictation.app/Contents/MacOS），否则一升级数据就没了。macOS 一律用
-/// 用户数据目录（~/Library/Application Support/com.dictation.app）。
+/// 用户数据目录（~/Library/Application Support/com.dictation.desktop）。
+/// 注意 identifier 改名会换这个目录，旧库靠 init 里的迁移源搬过来。
 fn resolve_dir(fallback: &Path) -> PathBuf {
     #[cfg(target_os = "macos")]
     {
@@ -156,11 +208,21 @@ mod tests {
         dir
     }
 
+    // is_writable 只在非 macOS 编译，测试必须跟着加同样的 cfg
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn writable_dir_is_used() {
         let dir = temp("writable");
         assert!(is_writable(&dir));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_always_uses_app_data_dir() {
+        let fallback = temp("macos-data");
+        assert_eq!(resolve_dir(&fallback), fallback);
+        let _ = std::fs::remove_dir_all(&fallback);
     }
 
     #[test]
@@ -226,5 +288,55 @@ mod tests {
         assert!(!wal.exists() && !shm.exists());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_identifier_dir_is_a_sibling_of_app_data_dir() {
+        let app_data = temp("legacy-dir").join("com.dictation.desktop");
+        assert_eq!(
+            legacy_identifier_dir(&app_data).unwrap(),
+            app_data.parent().unwrap().join(LEGACY_IDENTIFIER)
+        );
+    }
+
+    #[test]
+    fn migration_sources_puts_old_identifier_dir_first() {
+        let root = temp("sources");
+        let app_data = root.join("com.dictation.desktop");
+        let old = root.join(LEGACY_IDENTIFIER);
+        let exe = root.join("MacOS");
+        assert_eq!(
+            migration_sources(&app_data, Some(&exe)),
+            vec![
+                old.join("dictation.db"),
+                app_data.join("dictation.db"),
+                exe.join("dictation.db"),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn backups_from_old_dir_are_copied_without_overwriting() {
+        let root = temp("backups-adopt");
+        let old = root.join(LEGACY_IDENTIFIER);
+        let new = root.join("com.dictation.desktop");
+        std::fs::create_dir_all(old.join("backups")).unwrap();
+        std::fs::create_dir_all(new.join("backups")).unwrap();
+        std::fs::write(old.join("backups/same.json"), b"old").unwrap();
+        std::fs::write(old.join("backups/only-old.json"), b"old-only").unwrap();
+        std::fs::write(new.join("backups/same.json"), b"new").unwrap();
+
+        adopt_backups(&old, &new);
+
+        assert_eq!(
+            std::fs::read(new.join("backups/same.json")).unwrap(),
+            b"new"
+        );
+        assert_eq!(
+            std::fs::read(new.join("backups/only-old.json")).unwrap(),
+            b"old-only"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -13,12 +13,14 @@
 - **错题本**：连续答对 N 次自动出本（默认 2），也可手动判定已掌握、按分组筛选、专项默写
 - **记录**：历史会话 + 抽取顺序 + 只练本次错词，可单条删除（只删记录，不动词条进度）
 - **设置**：遮罩时长、出本连对数、词语字号、数据目录、手动备份导出/导入
+- **自动升级**：新版发布在 GitHub Release，启动时静默检查、设置页下载安装并校验签名；离线时照常使用
 
 ## 文档
 
 - [REQUIREMENTS.md](./REQUIREMENTS.md)：需求规格（目标、功能编号、数据模型、里程碑）
 - [AGENTS.md](./AGENTS.md)：接手仓库的操作手册（命令、约束、常见任务）
 - [wiki/](./wiki/README.md)：项目 wiki —— 架构、数据模型、默写流程、设计决策、踩坑
+- [wiki/updater.md](./wiki/updater.md)：自动升级、签名密钥保管、发版清单
 
 ## 技术栈
 
@@ -53,6 +55,8 @@ make install INSTALL_DIR=E:/Apps/dictation   # 换部署目录
 
 部署目标默认是 `D:/StudyApp/dictation`，会覆盖其中的 `dictation.exe`；应用正在运行时会拒绝覆盖并提示先关窗口。
 
+打包会生成自动升级所需的签名文件：推荐用 `make`（自动读取 `~/.tauri/dictation.key`）；直接跑 `npm run tauri build` 需自行设置 `TAURI_SIGNING_PRIVATE_KEY`，否则会报 `no private key` 并失败。
+
 在 Git Bash、PowerShell、cmd 里都能跑（Makefile 会自动把 Git 自带的 bash 指给 make，需要装 Git for Windows）。
 
 ## 目录
@@ -75,7 +79,7 @@ src/
 
 绿色便携：数据库就在 `dictation.exe` 同级目录的 `dictation.db`（WAL 模式），备份在同目录 `backups/`。整个文件夹拷走即可换电脑。
 
-程序目录不可写时（例如装在 `Program Files`）自动回落到 `%APPDATA%\com.dictation.app\`，实际路径可在「设置 → 数据与备份」查看。
+程序目录不可写时（例如装在 `Program Files`）自动回落到 `%APPDATA%\com.dictation.desktop\`；macOS 一律放 `~/Library/Application Support/com.dictation.desktop\`。实际路径可在「设置 → 数据与备份」查看。
 
 **想清空数据**：关闭应用后删除 `dictation.db`（以及 `-wal`、`-shm`），下次打开就是全新的空库——不会从旧位置恢复。
 

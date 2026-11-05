@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!--
+    生词默写 · 应用图标源文件（矢量、唯一设计源）
+    意象：田字格里刚写下的生字「人」+ 一支铅笔 = 家长报词、孩子手写。
+    重新生成全平台图标：npm run icons
+    约定：圆角与四角透明由本文件负责，tauri icon 只做缩放，不再裁圆角。
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFC963"/>
+      <stop offset="52%" stop-color="#FA8C2C"/>
+      <stop offset="100%" stop-color="#EC6519"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.26"/>
+      <stop offset="55%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="barrel" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#4A90BE"/>
+      <stop offset="55%" stop-color="#3474A3"/>
+      <stop offset="100%" stop-color="#255980"/>
+    </linearGradient>
+    <clipPath id="tile">
+      <rect x="24" y="24" width="976" height="976" rx="228"/>
+    </clipPath>
+  </defs>
+
+  <!-- 底色：暖橙渐变圆角方块 -->
+  <rect x="24" y="24" width="976" height="976" rx="228" fill="url(#bg)"/>
+  <g clip-path="url(#tile)">
+    <rect x="24" y="24" width="976" height="620" fill="url(#sheen)"/>
+    <circle cx="930" cy="960" r="360" fill="#C64F0B" opacity="0.10"/>
+  </g>
+
+  <!-- 田字格纸：投影 + 纸面 -->
+  <rect x="158" y="182" width="600" height="600" rx="54" fill="#9E3C08" opacity="0.22"/>
+  <rect x="150" y="150" width="600" height="600" rx="54" fill="#FFFCF6"/>
+
+  <!-- 田字格：实线外框 + 虚线十字 -->
+  <rect x="204" y="204" width="492" height="492" rx="10" fill="none" stroke="#ECA9A0" stroke-width="9"/>
+  <path d="M450 208 V692 M208 450 H692" fill="none" stroke="#ECA9A0" stroke-width="8"
+        stroke-linecap="round" stroke-dasharray="26 22"/>
+
+  <!-- 刚写下的生字「人」：先捺后撇，交点由撇盖住，避免两个圆头叠出墨疙瘩 -->
+  <g fill="none" stroke="#2C3A45" stroke-width="48" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M424 430 C486 512, 546 580, 634 640" stroke-linecap="butt"/>
+    <circle cx="634" cy="640" r="24" fill="#2C3A45" stroke="none"/>
+    <path d="M480 300 C452 410, 400 526, 306 632"/>
+  </g>
+
+  <!-- 铅笔：笔尖朝左上，落在纸的右下角 -->
+  <g transform="translate(800,800) rotate(-45)">
+    <rect x="-42" y="-26" width="84" height="178" rx="9" fill="#8C3A0B" opacity="0.20"/>
+    <polygon points="0,-150 42,-62 -42,-62" fill="#8C3A0B" opacity="0.20"/>
+  </g>
+  <g transform="translate(790,790) rotate(-45)">
+    <!-- 木质笔尖 -->
+    <polygon points="0,-150 42,-62 -42,-62" fill="#EBC98F"/>
+    <polygon points="0,-150 14,-122 -14,-122" fill="#3A434C"/>
+    <!-- 金属箍 -->
+    <rect x="-42" y="-62" width="84" height="34" rx="6" fill="#C6D0D7"/>
+    <path d="M-14 -60 V-30 M14 -60 V-30" stroke="#9AA9B3" stroke-width="5" stroke-linecap="round"/>
+    <!-- 笔杆 -->
+    <rect x="-42" y="-28" width="84" height="178" rx="10" fill="url(#barrel)"/>
+    <rect x="-27" y="-24" width="13" height="170" rx="6" fill="#FFFFFF" opacity="0.20"/>
+    <rect x="27" y="-24" width="9" height="170" rx="4" fill="#173E5C" opacity="0.28"/>
+    <!-- 橡皮头 -->
+    <rect x="-42" y="126" width="84" height="24" rx="10" fill="#F0A99A"/>
+  </g>
+</svg>

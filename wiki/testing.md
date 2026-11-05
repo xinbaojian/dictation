@@ -1,6 +1,6 @@
 ---
 title: 测试
-updated: 2026-11-04
+updated: 2026-11-05
 tags: [testing]
 related: [architecture.md, quiz-flow.md]
 ---
@@ -10,7 +10,7 @@ related: [architecture.md, quiz-flow.md]
 ## 怎么跑
 
 ```bash
-cd src-tauri && cargo test   # 80 个单测，秒级
+cd src-tauri && cargo test   # 83 个单测，秒级
 npm run typecheck            # 前端类型（无单测框架，靠 strict + 类型）
 npm run build                # 构建即验证
 ```
@@ -28,7 +28,7 @@ npm run build                # 构建即验证
 | `repo/word_progress.rs`（4） | 错→learning、新词对→mastered、learning 需连对 2 次、答错清零 streak |
 | `repo/sessions.rs`（28） | 建会话顺序与条目、空池报错、批改写回词条状态、错字下标去重升序、禁止重复提交、进度与 skip 持久化、active 查询、错词重开、删记录级联删条目且不动词条进度；连字偏好开启后不漏词、默认偏好（除连字）全开、全关等于纯随机；上一场词只排后不删词（题量不缩水）、新词优先于已会词、含弱字的词（含跨词共享字）优先；同批优先不重复用字、字不够时兜底补满、去重不跨档挤掉高优先级词、题量为 0 或超过候选数时保留全部；手工标的错字进弱字池；同一字在多个词里错时优先（去重后按词数判定）、同一词重复错不抬高计数 |
 | `repo/backup.rs`（3） | 导出→导入往返（含进度恢复）、嵌套分组往返、坏文件报错 |
-| `db`（5） | 可写目录探测、旧库只搬一次、无标记才搬、孤儿 WAL 清理、删库不复活 |
+| `db`（8） | 可写目录探测（非 macOS）/ macOS 恒用 `app_data_dir`、旧库只搬一次、无标记才搬、孤儿 WAL 清理、删库不复活；旧 identifier 目录定位与迁移优先级、备份只补不覆盖 |
 
 ## 加测试的位置
 

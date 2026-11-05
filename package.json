@@ -7,11 +7,13 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "icons": "tauri icon app-icon.svg"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@tauri-apps/plugin-updater": "^2.14.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

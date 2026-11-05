@@ -73,6 +73,12 @@ export const api = {
   importBackup: (path: string) => invoke<ImportSummary>("import_backup", { path }),
   openDataDir: () => invoke<void>("open_data_dir"),
   dataDirPath: () => invoke<string>("data_dir_path"),
+
+  // 自动升级：更新检查/下载走 @tauri-apps/plugin-updater（见 lib/updater.ts），
+  // 这两个是本项目自己的命令
+  appVersion: () => invoke<string>("app_version"),
+  /** 重启后当前进程立刻退出，invoke 会抛错，调用方需忽略 */
+  restartApp: () => invoke<void>("restart_app"),
 };
 
 export function errorMessage(err: unknown): string {

@@ -95,9 +95,23 @@ else
 endif
 	@echo "    installer: $$(ls $(BUNDLE_DIR)/*.$(BUNDLE_EXT) 2>/dev/null | head -1)"
 
+# ---- 自动升级签名私钥 ----
+# 公钥写在 tauri.conf.json；私钥只放本机 ~/.tauri/dictation.key，CI 由 Secret 注入。
+# 本机有密钥就自动带上，否则打出的安装包没有 .sig，旧版本会无法升级。
+# 手动指定：make build SIGN_KEY=/path/to/dictation.key
+SIGN_KEY ?= $(HOME)/.tauri/dictation.key
+ifneq ($(strip $(TAURI_SIGNING_PRIVATE_KEY)),)
+  SIGN_PREFIX :=
+else ifneq ($(wildcard $(SIGN_KEY)),)
+  # 密钥无密码也要显式给空值，否则 CLI 会交互式索要密码；带密码的密钥用环境变量传入
+  SIGN_PREFIX := TAURI_SIGNING_PRIVATE_KEY="$(SIGN_KEY)" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(TAURI_SIGNING_PRIVATE_KEY_PASSWORD)"
+else
+  SIGN_PREFIX :=
+endif
+
 build:
 	@echo "==> build: frontend + rust release + $(BUNDLES_ARG)"
-	@npm run tauri -- build --bundles $(BUNDLES_ARG)
+	@$(SIGN_PREFIX) npm run tauri -- build --bundles $(BUNDLES_ARG)
 
 dmg:
 ifeq ($(PLATFORM),macos)

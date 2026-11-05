@@ -4,6 +4,9 @@ name: Release
 #   Windows：NSIS .exe（x64 / x86-32位 / arm64）
 #   macOS  ：universal .dmg（x64 + arm64；Apple 已不支持 32 位，故无 32 位包）
 #   Linux  ：.deb + AppImage 通用包（x86_64 / aarch64；32 位 Linux 因系统已无 i386 桌面库，无法构建）
+#
+# 同时产出自动升级所需的签名产物（*.sig / macOS 的 *.app.tar.gz）与 latest.json。
+# 构建时的私钥来自仓库 Secret TAURI_SIGNING_PRIVATE_KEY，公钥写在 tauri.conf.json。
 on:
   push:
     tags:
@@ -49,6 +52,11 @@ jobs:
         run: npm install
 
       - name: Build Tauri (NSIS)
+        env:
+          # 没有私钥时不会生成 .sig，release job 的清单脚本会直接失败（防止发出无法升级的版本）
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # 本项目密钥无密码，但必须显式给空值：否则 CLI 会交互式索要密码，CI 里会卡住
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: npm run tauri -- build --target ${{ matrix.target }} --bundles nsis
 
       - name: Upload installer artifact
@@ -86,8 +94,12 @@ jobs:
       - name: Build Tauri (universal dmg)
         # 构建 universal 包，Intel 与 Apple Silicon 都能装；
         # 无签名证书时用 ad-hoc 签名，用户首次打开会看到“未知开发者”提示（属正常）。
+        # createUpdaterArtifacts=true 会另外产出 Dictation.app.tar.gz（更新用）及其 .sig。
         env:
           MACOSX_DEPLOYMENT_TARGET: '10.15'
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # 本项目密钥无密码，但必须显式给空值：否则 CLI 会交互式索要密码，CI 里会卡住
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: npm run tauri -- build --target universal-apple-darwin --bundles dmg
 
       - name: Upload dmg artifact
@@ -140,6 +152,10 @@ jobs:
         run: npm install
 
       - name: Build Tauri (deb + AppImage)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # 本项目密钥无密码，但必须显式给空值：否则 CLI 会交互式索要密码，CI 里会卡住
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: npm run tauri -- build --target ${{ matrix.target }} --bundles deb --bundles appimage
 
       - name: Upload bundle artifact
@@ -154,18 +170,38 @@ jobs:
     needs: [build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
     steps:
+      # 默认浅克隆只有 1 个 commit，取不到上一个 tag；整理提交说明需要完整历史
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes from commits
+        # GitHub 自带的 generate_release_notes 只汇总 PR，本仓库直接 push commit，
+        # 所以改由脚本按 commit message 分组生成，Full Changelog 链接也由脚本补上。
+        run: node scripts/gen-release-notes.mjs "${{ github.ref_name }}" release-notes.md
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
+      - name: Generate updater manifest
+        # 扫描各平台的 .sig，生成 latest.json；端点是 releases/latest/download/latest.json。
+        # 更新包本体（尤其 macOS 的 .app.tar.gz）必须一并上传，否则清单里的 url 会 404。
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/gen-updater-manifest.mjs "${{ github.ref_name }}" artifacts latest.json
+
       - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          # 根据 tag 自动生成更新说明
-          generate_release_notes: true
+          body_path: release-notes.md
           files: |
             artifacts/**/*.exe
             artifacts/**/*.dmg
             artifacts/**/*.deb
             artifacts/**/*.AppImage
+            artifacts/**/*.app.tar.gz
+            artifacts/**/*.sig
+            latest.json

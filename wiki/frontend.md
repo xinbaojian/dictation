@@ -1,6 +1,6 @@
 ---
 title: 前端结构
-updated: 2026-11-04
+updated: 2026-11-05
 tags: [frontend, react]
 related: [architecture.md, decisions.md]
 ---
@@ -60,3 +60,15 @@ Quiz 进入每个词会 `setRevealed(true)`，再由 `[revealed, settings, index
 词表分组树的拖放（`Wordbook.tsx`）：行上中下三段分别是「变子分组 / 排到前面 / 排到后面」，`zoneOf` 按 `clientY` 与行高的比例切；`targetFor` 负责把落点翻译成 `(parentId, beforeId)` 并挡掉「拖进自己的子孙」，所以非法落点连 `preventDefault` 都不做——不给假的可落点反馈。落点只是渲染态，真正的结构变更全在 `move_group` 里，前端拿到返回的新树直接替换 `groups`。
 
 分组树默认全部折叠：`collapsed` 只在首次加载后按 `hasChildren` 初始化一次（`Wordbook.tsx` 的初始 `useEffect`）。`refreshGroups` 在新建/编辑/删除后也会调用，把初始化挪进去会重置用户的展开状态。新建子分组、拖进折叠分组仍会自动展开父级。
+
+## 应用图标与 favicon
+
+**唯一设计源是仓库根的 `app-icon.svg`**（田字格 + 生字「人」+ 铅笔，暖橙圆角底）。`src-tauri/icons/` 下所有 png / `icon.ico` / `icon.icns` / android / ios 图标都由 `npm run icons`（`tauri icon app-icon.svg`）覆盖生成，**不要手改生成物**。
+
+- 圆角（rx=228）与四角透明由 SVG 自己负责；tauri icon 只做缩放，不会替你裁圆角。别把源图换成不透明方图，否则 macOS / Windows 上会出现直角白边
+- `index.html` 用 `./app-icon.svg` 作 favicon，Vite 会当作 asset 处理并带 hash 复制进 `dist/assets/`；不要改成 `/favicon.ico`（没有 public 目录）
+- 侧边栏左上角的小图标（`src/App.tsx`）`import appIconUrl from "../app-icon.svg?url"` 显示同一份 SVG，**旧版那个 CSS 画的橙底白「默」字方块已删**。`tsconfig.json` 的 `types` 必须含 `vite/client`，否则 `?url` 模块过不了 `tsc`
+- 所以应用图标 / favicon / 侧边栏三处共用一个源：改 `app-icon.svg` → `npm run icons` → 重新构建，三处一起换；只跑 `tauri icon` 而没重新打包，已安装程序里的侧边栏不会变
+- `tauri.conf.json` 的 `bundle.icon` 里 `icon.png`（512）是给 Linux 用的，其余四个是 Windows / macOS 常规项
+- `app-icon.png` 只是 1024 预览图，可再生成：`npx tauri icon app-icon.svg -p 1024 -o <临时目录>`；源文件必须是正方形且带透明度
+- 改完至少验一次 32x32 小图：田字格虚线在 32px 会糊成淡十字，属正常，但生字与铅笔仍要能辨认
