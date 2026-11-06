@@ -105,6 +105,7 @@ public/hanzi/           笔画数据分片，生成物（.gitignore 掉了），
 - **WebView2 的 HTML5 拖放要先关 Tauri 的文件拖放**：`tauri.conf.json` 窗口配置里 `dragDropEnabled: false`，否则 `dragstart / dragover / drop` 一个都不触发，还不报错。
 - **Windows 便携版升级后会「丢数据」**：updater 装的是 NSIS 版，数据目录从 exe 同级回落到 `%APPDATA%`；升级前先导出备份（wiki/pitfalls.md 第 21 条）。
 - **别把 `dictation.db` 放进网盘 / Syncthing 同步目录**：WAL 模式下 `-wal` / `-shm` 的文件锁跨机失效，冲突副本还会让人挑错文件。要跨机就用快照同步；导出快照必须用 `VACUUM INTO`，不能 `fs::copy` 运行中的库。
+- **WebView 里的 `<a href>` 必须自己 `preventDefault`**：本项目没配 `on_navigation`，Tauri 默认**不拦**导航，点一下就把主窗口导航到外站（白屏，没有后退可回）；`window.open` / `target="_blank"` 也开不出浏览器。外部链接一律走 `src/lib/external.ts` → `tauri-plugin-opener`（只放行 http/https），更新说明里的链接就是这么打开的。渲染网络来的文本（如 Release notes）用 `src/components/Markdown.tsx`，它输出 React 元素，**不碰 `dangerouslySetInnerHTML`**。
 
 ## 代码审查流程（改完必须走，直到审不出问题）
 

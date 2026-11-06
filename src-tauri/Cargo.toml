@@ -22,6 +22,8 @@ thiserror = "2"
 rand = "0.8"
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
+# 更新说明里的链接用系统浏览器打开（用户点击才触发，不改变离线定位）
+tauri-plugin-opener = "2"
 # 单实例：第二个进程会在启动时替换 / checkpoint 同一个 SQLite 库，
 # 与同步的 pending 替换叠加会静默丢数据，必须挡住
 tauri-plugin-single-instance = "2"

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import ConfirmModal from "../components/ConfirmModal";
+import Markdown from "../components/Markdown";
 import { Toast, useNotice } from "../components/Toast";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorMessage } from "../lib/ipc";
@@ -724,9 +725,12 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
                 {u.date && formatDate(u.date) ? " · " + formatDate(u.date) : ""}
               </p>
               {u.notes && (
-                <div className="mt-2 max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-amber-800">
-                  {u.notes}
-                </div>
+                // notes 是 release-notes.md 原文（Markdown）：渲染成排版而不是把 ### / [](...) 按文字吐出来
+                <Markdown
+                  source={u.notes}
+                  className="mt-2 max-h-40 overflow-y-auto break-words text-xs leading-relaxed text-amber-800"
+                  onOpenError={() => notify("error", "打不开链接，可稍后再试或到 GitHub Release 页面查看")}
+                />
               )}
               <div className="mt-3 flex gap-2">
                 <button

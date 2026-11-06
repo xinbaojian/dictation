@@ -40,6 +40,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         // 更新端点与公钥在 tauri.conf.json；离线时只在前端主动 check 才会联网
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // 只用于打开更新说明里的链接（前端限定 http/https，且必须用户点击）
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let (conn, data_dir) = db::init(app.handle())?;
             app.manage(AppState {
