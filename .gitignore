@@ -10,6 +10,8 @@ src-tauri/target
 .workbuddy-ai/
 # 本机工作记录（memory 日志），不是项目代码
 .workbuddy/
+# playwright-cli 的快照 / trace 产物
+.playwright-cli/
 # updater 签名私钥（只放本机 ~/.tauri/ 与 GitHub Secrets，绝不提交）
 *.key
 .env

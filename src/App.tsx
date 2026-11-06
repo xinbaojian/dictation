@@ -197,8 +197,8 @@ export default function App() {
             <Mistakes
               onStart={startSession}
               onGoWordbook={() => navigate({ name: "dictation", page: "wordbook" })}
-              onStroke={(groupId, title) =>
-                navigate({ name: "dictation", page: "stroke", groupId, title })
+              onStroke={(groupId, title, wordId) =>
+                navigate({ name: "dictation", page: "stroke", groupId, title, wordId })
               }
               onPrint={(groupId, title) =>
                 navigate({ name: "dictation", page: "print", mode: "mistakes", groupId, title })
@@ -209,6 +209,7 @@ export default function App() {
             <StrokeReview
               groupId={dr.groupId}
               title={dr.title}
+              wordId={dr.wordId}
               onBack={() => navigate({ name: "dictation", page: "mistakes" })}
             />
           )}

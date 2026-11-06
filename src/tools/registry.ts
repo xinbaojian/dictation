@@ -13,7 +13,7 @@ export type Route =
   | { name: "dictation"; page: "history" }
   | { name: "dictation"; page: "quiz"; sessionId: number }
   | { name: "dictation"; page: "review"; sessionId: number }
-  | { name: "dictation"; page: "stroke"; groupId: number | null; title: string }
+  | { name: "dictation"; page: "stroke"; groupId: number | null; title: string; wordId?: number }
   | { name: "dictation"; page: "print"; mode: "mistakes" | "group"; groupId: number | null; title: string }
   // ── 口算练习 ──
   | { name: "math"; page: "sheet" }

@@ -7,6 +7,8 @@ interface StrokeReviewProps {
   groupId: number | null;
   /** 副标题：与错题本当前的筛选保持一致 */
   title: string;
+  /** 从错题本点了具体某个词进来：直接从它开始（找不到时从头开始） */
+  wordId?: number;
   onBack: () => void;
 }
 
@@ -27,7 +29,7 @@ function boxSize(count: number): number {
 }
 
 /** 错题本的「笔画复习」：逐词展示笔顺动画，可先遮住让孩子自己写再对照 */
-export default function StrokeReview({ groupId, title, onBack }: StrokeReviewProps) {
+export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeReviewProps) {
   const [words, setWords] = useState<Mistake[]>([]);
   const [index, setIndex] = useState(0);
   const [hideMode, setHideMode] = useState(false);
@@ -41,14 +43,18 @@ export default function StrokeReview({ groupId, title, onBack }: StrokeReviewPro
   useEffect(() => {
     (async () => {
       try {
-        setWords(await api.listMistakes(groupId));
+        const list = await api.listMistakes(groupId);
+        setWords(list);
+        // 错题本里点了某个词进来：直接落到那个词。找不到（比如刚被移出错题本）就从头开始
+        const at = wordId == null ? 0 : list.findIndex((w) => w.id === wordId);
+        setIndex(at > 0 ? at : 0);
       } catch (e) {
         setError(errorMessage(e));
       } finally {
         setLoading(false);
       }
     })();
-  }, [groupId]);
+  }, [groupId, wordId]);
 
   const total = words.length;
   const word = words[index];

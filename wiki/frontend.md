@@ -33,8 +33,8 @@ related: [architecture.md, decisions.md]
 | 抽题配置 | `pages/Pick.tsx` | 分组多选（默认全不选，未选时不可开始）、范围、题量（5 / 10 / 15 / 20 / 25 / 30 / 全部）、抽词偏好多选（反复错字 / 错过字 / 新词 / 上次写过的排后 / 同批不重字 / 连字，默认除连字外全选，全不选 = 纯随机）、可抽数量（120ms 防抖）；顶部「继续上次」横幅 |
 | 默写 | `pages/Quiz.tsx` | 进入即自动显示、到点遮罩、键盘快捷键、进度落库、`advancing` 锁 |
 | 批改 | `pages/Review.tsx` | 网格点错、`skip_marked` 预置、提交后 0.9s 跳转 |
-| 错题本 | `pages/Mistakes.tsx` | 分组筛选、连对进度条（读设置）、专项默写（**点击后先确认再开**，防误点）、打印、**手工加词并点字标错**（`AddMistakeModal`）、**进笔画复习** |
-| 笔画复习 | `pages/StrokeReview.tsx` | 逐词看笔顺动画（`components/StrokeWord.tsx` + `lib/strokes.ts`）、每字一个田字格、点格子只重播该字、「先自己写」遮住笔画后再对照、空格/←/R 快捷键 |
+| 错题本 | `pages/Mistakes.tsx` | 分组筛选、连对进度条（读设置）、专项默写（**点击后先确认再开**，防误点）、打印、**手工加词并点字标错**（`AddMistakeModal`）、**进笔画复习（点词语直接从该词开始，路由带 `wordId`）** |
+| 笔画复习 | `pages/StrokeReview.tsx` | 逐词看笔顺动画（`components/StrokeWord.tsx` + `lib/strokes.ts`）、每字一个田字格、点格子只重播该字、「先自己写」遮住笔画后再对照、空格/←/R 快捷键、可从指定词开始（错题本点词语；找不到时从头开始） |
 | 记录 | `pages/History.tsx` | 50 条列表 + 详情弹窗 + 只练本次错词 + 单条删除 |
 | 设置 | `pages/Settings.tsx` | 遮罩/连对/字号、备份导出导入、打开数据目录（连字已挪到抽题页的抽词偏好） |
 | 词表 | `pages/Wordbook.tsx` | 分组树（可折叠、默认全部折叠、**可拖动调整层级与顺序**）、词数/错题/最近练习、行内编辑、粘贴导入、标记错题 |

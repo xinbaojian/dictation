@@ -9,12 +9,13 @@ interface MistakesProps {
   onStart: (sessionId: number) => void;
   onGoWordbook: () => void;
   onPrint: (groupId: number | null, title: string) => void;
-  /** 进笔画复习页（按当前分组筛选） */
-  onStroke: (groupId: number | null, title: string) => void;
+  /** 进笔画复习页（按当前分组筛选）；带 wordId = 从错题本点了具体某个词，直接从它开始 */
+  onStroke: (groupId: number | null, title: string, wordId?: number) => void;
 }
 
-/** 与批改页一致：标红的字 = 历次批改里标过「不会写」的字 */
-function MistakeWord({ word }: { word: Mistake }) {
+/** 与批改页一致：标红的字 = 历次批改里标过「不会写」的字。
+ *  点词语本身 = 直接复习这个词的笔画（不用从列表头开始翻）。 */
+function MistakeWord({ word, onStroke }: { word: Mistake; onStroke: (wordId: number) => void }) {
   const chars = [...word.text];
   const marked = word.wrongChars.filter((i) => i >= 0 && i < chars.length);
   const label =
@@ -28,16 +29,23 @@ function MistakeWord({ word }: { word: Mistake }) {
 
   return (
     <td className="py-2.5 pl-8">
-      <span className="text-[15px] text-stone-800">
-        {chars.map((ch, i) => (
-          <span
-            key={i}
-            className={marked.includes(i) ? "rounded bg-rose-200/70 px-0.5 text-rose-800" : ""}
-          >
-            {ch}
-          </span>
-        ))}
-      </span>
+      <button
+        type="button"
+        onClick={() => onStroke(word.id)}
+        title="看这个词的笔顺动画"
+        className="-mx-1 rounded px-1 text-left hover:bg-amber-50 focus-visible:bg-amber-50 focus-visible:outline-none"
+      >
+        <span className="text-[15px] text-stone-800 underline decoration-stone-300 underline-offset-4 hover:decoration-amber-400">
+          {chars.map((ch, i) => (
+            <span
+              key={i}
+              className={marked.includes(i) ? "rounded bg-rose-200/70 px-0.5 text-rose-800" : ""}
+            >
+              {ch}
+            </span>
+          ))}
+        </span>
+      </button>
       {label && <span className="mt-0.5 block text-[11px] text-rose-500">{label}</span>}
     </td>
   );
@@ -145,7 +153,7 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
         <div>
           <h1 className="text-lg font-semibold text-stone-800">错题本</h1>
           <p className="mt-1 text-sm text-stone-500">
-            共 {mistakes.length} 个词 · 连续答对 {streak} 次自动移出
+            共 {mistakes.length} 个词 · 点词语可直接复习笔画 · 连续答对 {streak} 次自动移出
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -237,7 +245,7 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
             <tbody>
               {mistakes.map((word) => (
                 <tr key={word.id} className="group border-t border-stone-100 hover:bg-stone-50/70">
-                  <MistakeWord word={word} />
+                  <MistakeWord word={word} onStroke={(id) => onStroke(filter, scopeLabel, id)} />
                   <td className="py-2.5 text-xs text-stone-500">
                     {word.groupName}
                   </td>
