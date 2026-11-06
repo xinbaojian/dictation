@@ -8,6 +8,7 @@
 // 清单格式见 https://tauri.app/plugin/updater/ 的「Static JSON File」：
 //   version / notes / pub_date + platforms["OS-ARCH"] = { signature, url }
 // 注意：Tauri 会先校验整份 JSON，任一列出的平台缺少 signature 或 url 都会让所有客户端检查失败。
+// PLATFORMS 列出的 6 个平台一个都不能缺（都来自 release job 的 needs 依赖），缺任一个直接报错退出。
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -85,12 +86,15 @@ for (const p of PLATFORMS) {
   for (const key of p.keys) platforms[key] = { signature, url };
 }
 
-if (Object.keys(platforms).length === 0) {
-  console.error("no signed updater artifacts found, refuse to publish an empty manifest");
+if (missing.length > 0) {
+  // 任一平台缺失都拒绝发布：latest.json 少一个 OS-ARCH 键，该平台的全部客户端
+  // 检查更新都会报「None of the fallback platforms ... were found」。
+  // v0.3.0 / v0.4.0 曾因 macOS job 只打 dmg 不产 .app.tar.gz.sig 而发出
+  // 没有 darwin 键的清单（当时这里只 WARN 不失败），macOS 自动升级全部失效。
+  console.error("missing updater artifacts, refuse to publish an incomplete manifest:");
   for (const m of missing) console.error("  - " + m);
   process.exit(1);
 }
-for (const m of missing) console.warn("WARN " + m);
 
 const notes = existsSync("release-notes.md") ? readFileSync("release-notes.md", "utf8").trim() : "";
 const manifest = {
@@ -101,10 +105,7 @@ const manifest = {
 };
 
 writeFileSync(outFile, JSON.stringify(manifest, null, 2) + "\n");
-console.log(
-  `==> ${outFile}: ${manifest.version}, ${Object.keys(platforms).length} platforms` +
-    (missing.length ? ` (${missing.length} missing)` : ""),
-);
+console.log(`==> ${outFile}: ${manifest.version}, ${Object.keys(platforms).length} platforms`);
 for (const [key, value] of Object.entries(platforms)) {
   console.log(`    ${key.padEnd(18)} ${value.url}`);
 }

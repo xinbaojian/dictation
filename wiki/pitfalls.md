@@ -1,6 +1,6 @@
 ---
 title: 踩坑记录
-updated: 2026-11-05
+updated: 2026-11-06
 tags: [pitfalls]
 related: [testing.md, architecture.md]
 ---
@@ -179,3 +179,23 @@ NSIS 安装包，装到 `Program Files` 后数据目录会回落到 `%APPDATA%\c
 
 **为什么必须有**：第二个进程会在启动时 `wal_checkpoint` 甚至替换同一个 SQLite 库，与同步的
 `pending.db` 替换叠加，旧实例的写入会落进被 unlink 的 inode（静默丢数据）。见 AGENTS.md 硬约束 11。
+
+## 23. macOS 只打 `--bundles dmg` 不会产更新包，latest.json 缺 darwin 键
+
+Tauri CLI 2.x 的 bundler **只有在 bundles 列表里含 `app` 时**才会产出 macOS 更新包
+`Dictation.app.tar.gz`（+ `.sig`）；只写 `dmg` 会静默跳过（仅打一条 warning，
+`bundle.rs` 里 `package_types.contains(&MacOsBundle)` 不成立就不进 updater 分支）。
+v0.3.0 / v0.4.0 的 CI 因此从未上传过 macOS 更新包，而 `gen-updater-manifest.mjs`
+当时对缺失平台只 WARN 不失败，照常发布了没有 darwin 键的 `latest.json` ——
+所有 macOS 客户端检查更新都报：
+
+```
+检查更新失败：None of the fallback platforms `["darwin-aarch64-app", "darwin-aarch64"]`
+were found in the response `platforms` object
+```
+
+（updater 插件先找 `{os}-{arch}-{bundle_type}` 再回退 `{os}-{arch}`，键名本身没错，是条目整个缺失。）
+
+**做法**：CI macOS job 用 `--bundles app --bundles dmg`（dmg 供人工下载，app 包给 updater）；
+`gen-updater-manifest.mjs` 任一平台缺 `.sig` 直接 `exit 1`，绝不能带病发布。
+本地验证更新包用 `npm run tauri -- build --bundles app`（本机打 dmg 另有第 17 条的坑）。

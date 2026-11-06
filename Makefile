@@ -171,4 +171,4 @@ release:
 	@git tag $(RELEASE_TAG)
 	@git push -u origin $$(git rev-parse --abbrev-ref HEAD)
 	@git push origin $(RELEASE_TAG)
-	@echo "==> pushed tag $(RELEASE_TAG); GitHub Actions will build Windows .exe + macOS .dmg and publish the release"
+	@echo "==> pushed tag $(RELEASE_TAG); GitHub Actions will build Windows .exe + macOS .dmg/.app.tar.gz + Linux .deb/.AppImage and publish the release"

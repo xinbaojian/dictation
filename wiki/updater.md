@@ -1,6 +1,6 @@
 ---
 title: 自动升级（GitHub Release）
-updated: 2026-11-05
+updated: 2026-11-06
 tags: [updater, release, ci]
 related: [release.md, architecture.md, pitfalls.md]
 ---
@@ -65,11 +65,15 @@ make release v0.2.2
 ```
 
 - 平台键是 `OS-ARCH`（`windows-x86_64/i686/aarch64`、`darwin-x86_64/aarch64`、`linux-x86_64/aarch64`）。
-  macOS universal 一份 `.app.tar.gz` 写两个键。
+  macOS universal 一份 `.app.tar.gz` 写两个键；updater 插件先找 `{os}-{arch}-{bundle_type}`
+  再回退 `{os}-{arch}`，所以裸 `darwin-aarch64` 键能用。
 - 各平台的更新包：Windows = NSIS `.exe`、macOS = `.app.tar.gz`（**不是 .dmg**）、Linux = `.AppImage`；
   签名文件就是「包名 + `.sig`」，由 `bundle.createUpdaterArtifacts: true` 生成。
+  **macOS 还要求 bundles 列表里有 `app`**（CI 是 `--bundles app --bundles dmg`），只打 dmg 不产
+  `.app.tar.gz`（[pitfalls.md](./pitfalls.md) 第 23 条，v0.3.0 / v0.4.0 曾因此中招）。
 - **Tauri 先校验整份 JSON 再比版本号**：任一列出的平台缺 `url` 或 `signature`，所有客户端检查都会失败。
-  脚本对缺失平台只告警、不写半条记录；一个平台都没有则报错退出。
+  脚本对缺失平台**直接报错退出**（6 个平台来自 release job 的 needs 依赖，理应齐全；
+  2026-11-06 前的版本只 WARN，导致发布过没有 darwin 键的清单）。
 - `url` 指向的资产必须随 Release 一起上传 —— `files:` 里 `*.app.tar.gz` 不能漏，否则清单有效但下载 404。
 - 本地验证（不需要真 Release）：
   `GITHUB_REPOSITORY=xinbaojian/dictation node scripts/gen-updater-manifest.mjs v0.2.2 <模拟 artifacts> /tmp/latest.json`
@@ -103,3 +107,6 @@ make release v0.2.2
 7. 直接跑 `npm run tauri build` 而不带私钥，打包到最后会失败并报
    `A public key has been found, but no private key`（配置里有公钥却没有可签名的私钥）。
    用 `make build`（自动读本机密钥）或显式 `TAURI_SIGNING_PRIVATE_KEY=...`，别为了绕过去把公钥删掉。
+8. **macOS 更新包只有 bundles 含 `app` 才会产出**：`--bundles dmg` 不产 `.app.tar.gz` / `.sig`，
+   清单会缺 darwin 键、macOS 客户端检查更新报 fallback platforms 错（第 23 条坑）。
+   CI 与本地验证见上文「静态清单」一节。

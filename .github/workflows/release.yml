@@ -91,22 +91,30 @@ jobs:
       - name: Install frontend deps
         run: npm install
 
-      - name: Build Tauri (universal dmg)
+      - name: Build Tauri (universal dmg + updater app)
         # 构建 universal 包，Intel 与 Apple Silicon 都能装；
         # 无签名证书时用 ad-hoc 签名，用户首次打开会看到“未知开发者”提示（属正常）。
-        # createUpdaterArtifacts=true 会另外产出 Dictation.app.tar.gz（更新用）及其 .sig。
+        # createUpdaterArtifacts=true 只在 bundles 里含 `app` 时才会产出更新包
+        # Dictation.app.tar.gz（+ .sig）——只写 dmg 不产（Tauri CLI 2.x bundler 的行为，
+        # v0.3.0/v0.4.0 因此发过没有 darwin 键的 latest.json，macOS 客户端检查更新全部报错）。
+        # dmg 供人工下载安装，app 包给 updater 用，两个都要。
         env:
           MACOSX_DEPLOYMENT_TARGET: '10.15'
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           # 本项目密钥无密码，但必须显式给空值：否则 CLI 会交互式索要密码，CI 里会卡住
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-        run: npm run tauri -- build --target universal-apple-darwin --bundles dmg
+        run: npm run tauri -- build --target universal-apple-darwin --bundles app --bundles dmg
 
       - name: Upload dmg artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: src-tauri/target/universal-apple-darwin/release/bundle/**
+          # 只传更新包与 dmg，别把 Dictation.app 整个目录树带进 artifact（几十 MB）；
+          # 多路径时 upload-artifact 以 bundle/ 为公共根，下载解包后结构与脚本预期一致
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.sig
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
 
   # ---------- Linux：.deb + AppImage（x86_64 原生 / aarch64 原生 ARM runner） ----------
   # 说明：Ubuntu 22.04 起已裁撤 i386 桌面库（webkit2gtk / gtk 无 32 位开发包），
