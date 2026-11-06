@@ -231,7 +231,9 @@ export default function MathSheetPage() {
               </div>
               {example && (
                 <div className="ex">
-                  {options.pos === "random" ? "举例：" : "例："}
+                  {options.pos === "random"
+                    ? "每题的空位和符号都可能不同，按从左到右先算能算的一步，再倒着想缺的数。举例："
+                    : "例："}
                   {example.expr} → {example.step}
                   {example.answer !== "" && (
                     <>

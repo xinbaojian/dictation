@@ -25,7 +25,7 @@ npm run tauri dev          # 开发运行（Vite 1420 + Rust）
 npm run typecheck          # 前端类型检查（tsc --noEmit）
 npm run build              # 前端构建（typecheck + vite build）
 npm run icons              # 改完 app-icon.svg 后，重新生成全平台图标
-cd src-tauri && cargo test # 后端单测，当前 136 个（另有 1 个需真实服务器的集成测试默认忽略）
+cd src-tauri && cargo test # 后端单测（数目随提交增长，以输出为准；另有 1 个需真实服务器的集成测试默认忽略）
 cd src-tauri && cargo build
 npm run tauri build        # 出安装包；需先设 TAURI_SIGNING_PRIVATE_KEY，推荐用 make build 自动带上
 ```

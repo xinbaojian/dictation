@@ -173,7 +173,7 @@ Tailscale 解封装后走 `tailscale0`，不经安全组，收紧公网不影响
 ## 验证
 
 ```bash
-cd src-tauri && cargo test                 # 136 个单测（含 sync 的 53 个，拉取/推送用假 store 覆盖）
+cd src-tauri && cargo test                 # 全部单测（含 sync 的 53 个，拉取/推送用假 store 覆盖）
 # 真实服务器集成测试，默认忽略；跑完会把云端行恢复成空快照 + version 0
 DICTATION_SYNC_HOST=100.x.y.z DICTATION_SYNC_PORT=4407 \
 DICTATION_SYNC_DB=dictation_sync DICTATION_SYNC_USER=dictation \
