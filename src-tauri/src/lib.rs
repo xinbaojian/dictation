@@ -28,6 +28,15 @@ impl AppState {
 
 pub fn run() {
     tauri::Builder::default()
+        // 必须第一个注册：第二个进程会在启动时 checkpoint / 替换同一个 SQLite 库，
+        // 与同步的 pending 替换叠加会导致旧实例的写入落进被 unlink 的文件里（静默丢数据）。
+        // 这里改成把已有窗口提到前台，而不是开第二个进程。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         // 更新端点与公钥在 tauri.conf.json；离线时只在前端主动 check 才会联网
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -75,6 +84,13 @@ pub fn run() {
             commands::system::data_dir_path,
             commands::system::app_version,
             commands::system::restart_app,
+            commands::sync::sync_status,
+            commands::sync::save_sync_config,
+            commands::sync::test_sync_connection,
+            commands::sync::sync_push,
+            commands::sync::sync_pull,
+            commands::sync::sync_discard_pending,
+            commands::sync::sync_repair_state,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");

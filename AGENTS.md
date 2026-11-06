@@ -8,7 +8,7 @@
 
 - Rust + Tauri 2 + SQLite（rusqlite，bundled）
 - React 18 + TypeScript + Vite + Tailwind CSS 4
-- 数据只在本机 SQLite，无账号、无云端；**唯一联网行为**是自动升级时访问 GitHub Release（离线不影响使用）
+- 数据只在本机 SQLite，无账号、无官方云；**默认唯一联网行为**是自动升级访问 GitHub Release；用户在设置里显式配置自有 MySQL 后才增加同步请求（两种情况下离线都不影响使用），详见 [wiki/sync.md](./wiki/sync.md)
 
 ## 沟通交流
 
@@ -25,7 +25,7 @@ npm run tauri dev          # 开发运行（Vite 1420 + Rust）
 npm run typecheck          # 前端类型检查（tsc --noEmit）
 npm run build              # 前端构建（typecheck + vite build）
 npm run icons              # 改完 app-icon.svg 后，重新生成全平台图标
-cd src-tauri && cargo test # 后端单测，当前 83 个（macOS；平台条件测试有 1 个差异）
+cd src-tauri && cargo test # 后端单测，当前 136 个（另有 1 个需真实服务器的集成测试默认忽略）
 cd src-tauri && cargo build
 npm run tauri build        # 出安装包；需先设 TAURI_SIGNING_PRIVATE_KEY，推荐用 make build 自动带上
 ```
@@ -42,10 +42,12 @@ npm run tauri build        # 出安装包；需先设 TAURI_SIGNING_PRIVATE_KEY�
 app-icon.svg            应用图标唯一矢量源；改完跑 npm run icons
 app-icon.png            1024 预览图（由 SVG 渲染），别手改；src-tauri/icons/ 全部是生成物
 src-tauri/migrations/   0001 表结构、0002 会话进度、0003 错字标记、0004 分组树、0005 手工错字（只增不改，user_version 递增）
-src-tauri/src/db/       连接 + WAL + 迁移
+src-tauri/src/db/       连接 + WAL + 迁移 + 启动时 pending 快照替换
+                        （数据目录里还有同步用的 .sync-credentials.json / .sync-state.json /
+                         .sync-pending-state.json / pending.db / backups/sync/，见 wiki/sync.md）
 src-tauri/src/domain/   text.rs 粘贴切分、sampler.rs 抽题（纯函数，带单测）
-src-tauri/src/repo/     groups / words / sessions / word_progress / settings / backup
-src-tauri/src/commands/ library.rs / quiz.rs / system.rs（薄封装，共 33 个命令）
+src-tauri/src/repo/     groups / words / sessions / word_progress / settings / backup / sync
+src-tauri/src/commands/ library.rs（11）/ quiz.rs（14）/ system.rs（9）/ sync.rs（7）（薄封装，共 41 个命令）
 src-tauri/src/speech/   TTS 抽象 trait Speaker（V1 只有 NullSpeaker）
 src/pages/              Pick / Quiz / Review / Mistakes / History / Settings / Wordbook / PrintSheet
 src/lib/ipc.ts          全部自定义后端命令集中于此，类型来自 src/types.ts
@@ -64,6 +66,8 @@ scripts/gen-updater-manifest.mjs  CI 里把各平台 .sig 汇总成 Release 的 
 7. **数据目录位置**：Windows / Linux 优先放「可执行文件同级目录」（绿色便携，拷走文件夹即可换电脑）；**macOS 一律放 `~/Library/Application Support/com.dictation.desktop`**——`.app` 包更新时会被整体替换，放包内（`Dictation.app/Contents/MacOS`）会随更新丢数据。`src-tauri/src/db/mod.rs::resolve_dir` 已用 `cfg(target_os = "macos")` 隔离，别改回「放 exe 同级」。
 8. **identifier 别再改**：它同时是 Tauri `app_data_dir()` 的最后一级目录名，改了等于换数据目录，老用户会以为数据丢了。从 `com.dictation.app` 换过来的旧库／备份由 `db/mod.rs::migration_sources` 一次性搬入（只复制不覆盖）；真要再改，必须把新名字加进迁移源并保持「只搬一次」。
 9. **updater 签名私钥绝不入库、公钥别随便换**：私钥只在 `~/.tauri/dictation.key` 与 GitHub Secret `TAURI_SIGNING_PRIVATE_KEY`；公钥写死在 `tauri.conf.json`，换公钥等于让所有已装旧版失去升级能力。CI 缺私钥时 `gen-updater-manifest.mjs` 会主动让发版失败，别改成「跳过」。
+10. **同步只搬运整库快照，绝不做行级复制**：本地 SQLite 永远是唯一主库；云端只存一行 `LONGBLOB + version`，推送走 CAS 乐观锁，拉取写 `pending.db` 并在下次启动、打开连接之前替换（备份旧库 + 清 WAL）。同步凭据（含密码）绝不进 `settings` 表、绝不回传前端；网络命令必须 `async fn` + `spawn_blocking`，`MutexGuard` 不跨 await。整库恢复属数据目录级操作，不算违反第 1 条，但同步不能成为业务写入口。详见 [wiki/sync.md](./wiki/sync.md) 与 ADR-17。
+11. **单实例插件必须第一个注册**（`tauri-plugin-single-instance`）：第二个进程启动时会 `wal_checkpoint` 甚至替换同一个 SQLite 库，和同步的 pending 替换叠加会让旧实例写进被 unlink 的 inode（静默丢数据）。第二次启动只把已有窗口提到前台，绝不开第二个进程。别删这个插件，也别把它挪到其它 `.plugin()` 之后。
 
 ## 代码约定
 
@@ -83,6 +87,7 @@ scripts/gen-updater-manifest.mjs  CI 里把各平台 .sig 汇总成 Release 的 
 | 打印相关 | `pages/PrintSheet.tsx` + `index.css` 里的 `.tian` 与 ```media print` |
 | 分组树拖动 | `repo/groups.rs::move_to`（后端）+ `pages/Wordbook.tsx` 的 `targetFor / zoneOf`（落点判定） |
 | 自动升级 | `src/lib/updater.ts` + `Settings.tsx` / `App.tsx`；清单与平台映射在 `scripts/gen-updater-manifest.mjs` |
+| 跨设备同步 | `repo/sync.rs`（`SnapshotStore` / 快照 / CAS / pending）+ `commands/sync.rs` + `db/mod.rs::init` + `Settings.tsx`；见 [wiki/sync.md](./wiki/sync.md) |
 
 ## 已知坑
 
@@ -93,6 +98,32 @@ scripts/gen-updater-manifest.mjs  CI 里把各平台 .sig 汇总成 Release 的 
 - 会话推进有 `advancing` ref 同步锁，别换成普通 state，会连点跳词。
 - **WebView2 的 HTML5 拖放要先关 Tauri 的文件拖放**：`tauri.conf.json` 窗口配置里 `dragDropEnabled: false`，否则 `dragstart / dragover / drop` 一个都不触发，还不报错。
 - **Windows 便携版升级后会「丢数据」**：updater 装的是 NSIS 版，数据目录从 exe 同级回落到 `%APPDATA%`；升级前先导出备份（wiki/pitfalls.md 第 21 条）。
+- **别把 `dictation.db` 放进网盘 / Syncthing 同步目录**：WAL 模式下 `-wal` / `-shm` 的文件锁跨机失效，冲突副本还会让人挑错文件。要跨机就用快照同步；导出快照必须用 `VACUUM INTO`，不能 `fs::copy` 运行中的库。
+
+## 代码审查流程（改完必须走，直到审不出问题）
+
+**核心规则：审查者必须是「干净上下文」的子 agent。** 主会话自己审自己的改动一定有作者滤镜，上一轮定下的结论也会污染判断；而 resume 同一个子 agent 同样会带上它自己的历史结论。所以**每一轮都新建一个子 agent**，只给它仓库 + 本轮改动范围 + 验证结果。
+
+1. **先跑验证，再起审查**：`cd src-tauri && cargo test`、`cargo clippy --all-targets`、`npm run typecheck`。审查者要的是可复现的基线，测试红着去审等于浪费一轮。
+2. **起一个全新子 agent**（`Agent`，`subagent_type: general-purpose`，一次性任务，不复用），prompt 必须自包含：
+   - 要审的文件清单（`git status --short` + `git diff --stat` 的结果），明确要求读全文而不是只看 diff；
+   - 项目硬约束（本文件「硬约束」一节 + 相关 wiki 页面路径），让它可以判定什么叫「违反约定」；
+   - 已跑通的验证命令与结果，避免它再花时间跑一遍；
+   - 输出格式：**每条问题给 `文件:行号` + 触发路径（什么操作序列会踩到）+ 后果严重度（P1 阻断 / P2 建议）+ 最小修法**；
+   - 明确要求：**只读，不改代码**；没有问题就直说「未发现问题」，不要为了凑数编造。
+3. **主 agent 逐条判定**（这是唯一有权改代码的一方）：
+   - 真问题 → 修，并补一条能复现它的单测（修不带测试等于没修，下一轮还会被审出来）；
+   - 误报 → 记下理由。**下一轮 prompt 里显式列出「已判定为非问题：X，理由 Y」**，否则新审查者会重复提同一条。
+4. **修复后重新跑第 1 步，再起一个新的干净子 agent 复审。**
+5. **收敛条件**：某一轮既没有 P1，也没有「本轮修复新引入」的 P2，才算审干净。剩余 P2 若判定为可接受，必须在 prompt 与提交说明里写明「已知取舍」，不能默默留着。
+6. **把每轮结论落到 `.workbuddy/memory/YYYY-MM-DD.md`**：发现了几条、哪几条是真问题、怎么修的、哪几条判为误报及理由。下一个会话的人（或 AI）靠这个避免重复踩。
+
+反面教材（都要避免）：
+
+- 主会话「我已经仔细看过了」——自己审自己；
+- 一问一答式续审同一个子 agent——它的旧结论会变成新的偏见；
+- 审查者顺手改了代码——改动没有经过判定，也没人给它补测试；
+- 只看 diff 不看上下文——漏掉「调用方怎么用」「这个分支在真实启动路径上可达吗」。
 
 ## 文档
 

@@ -147,3 +147,39 @@ export interface ImportSummary {
   wordsAdded: number;
   wordsSkipped: number;
 }
+
+/** 自有 MySQL 快照同步配置；注意这里永远不含密码 */
+export interface SyncConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  deviceName: string;
+}
+
+export interface SyncStatus {
+  configured: boolean;
+  enabled: boolean;
+  hasPassword: boolean;
+  config: SyncConfig;
+  deviceId: string;
+  lastSyncAt: string;
+  lastSyncFrom: string;
+  /** 有下载好的快照等待下次启动替换 */
+  pending: boolean;
+  /** 本机同步文件异常时的告警；非空表示推送/拉取已被暂停 */
+  warning: string;
+  /** 上次启动替换快照失败的原因，可手动清除；不禁用同步 */
+  lastError: string;
+  /** .sync-state.json 是否损坏；为 true 才能重置同步状态 */
+  stateCorrupt: boolean;
+}
+
+export interface SyncOutcome {
+  kind: "applied" | "conflict" | "unchanged" | "pending" | "empty";
+  message: string;
+  remoteVersion: number;
+  /** 需要用户在确认框里决定是否强制覆盖 */
+  needsConfirm: boolean;
+}

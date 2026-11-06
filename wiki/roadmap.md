@@ -1,8 +1,8 @@
 ---
 title: 路线图
-updated: 2026-11-04
+updated: 2026-11-05
 tags: [roadmap]
-related: [overview.md, decisions.md]
+related: [overview.md, decisions.md, sync.md]
 ---
 
 # 路线图
@@ -15,8 +15,9 @@ related: [overview.md, decisions.md]
 | M2 | 抽题配置、默写页（遮罩/快捷键/进度落库/中断恢复） | ✅ |
 | M3 | 批改、错题本出本规则、历史与详情、只练本次错词 | ✅ |
 | M4 | 设置、手动备份导出/导入、打印复习单、NSIS 安装包 | ✅ |
+| M5 | 可选跨设备同步：自有 MySQL 整库快照、Tailscale、CAS 乐观锁、启动前替换 | ✅ |
 
-补充完成（原 P1）：分组「最近练习时间」、词表内标记错题（错题本反向操作）、A4 田字格打印单。
+补充完成（原 P1）：分组「最近练习时间」、词表内标记错题（错题本反向操作）、A4 田字格打印单、Tauri updater 自动升级。
 
 后续小改进：上一场词排后不打乱题量、抽词优先级（写错过的字 > 新词 > 其余）、同批词尽量不重复用字、题量按 5 递增、抽题页抽词偏好多选、反复错的字优先抽取、错题本手工加词并标错字、默写页小字回看已默写词、分组树默认折叠。
 
@@ -27,7 +28,9 @@ related: [overview.md, decisions.md]
 3. **多孩子**：拆 `word_progress(child_id, word_id, ...)`。前置：repo 层已把进度读写收口，属纯搬迁
 4. **数据看板**：每周错词趋势、分组掌握率。依赖 `session_items` 已有数据，纯前端统计
 5. **错题本按错误次数分组复习**（连错 3 次以上的重点练）
+6. **同步体验**：启动自动拉取 / 退出自动推送、云端快照历史回滚（当前是手动 + 重启生效）
 
 ## 明确不做
 
-- 拼音、语音识别、云同步、账号、积分排行（见 [decisions.md](./decisions.md) 与 [overview.md](./overview.md)）
+- 拼音、语音识别、账号体系、厂商托管的云同步、积分排行（见 [decisions.md](./decisions.md) 与 [overview.md](./overview.md)）
+- 行级双向数据库复制、自动冲突合并：与现有数据模型冲突，代价远大于收益（ADR-17）

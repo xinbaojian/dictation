@@ -50,7 +50,8 @@ export default function ConfirmModal({
         </>
       }
     >
-      <p className="text-sm leading-relaxed text-stone-600">{body}</p>
+      {/* whitespace-pre-line：正文里的 \n 是刻意换行（比如冲突提示的后果说明） */}
+      <p className="whitespace-pre-line text-sm leading-relaxed text-stone-600">{body}</p>
     </Modal>
   );
 }

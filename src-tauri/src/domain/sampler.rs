@@ -47,6 +47,7 @@ pub struct Candidate {
 ///
 /// - group_ids 为空表示全部分组（错题本模式常用）
 /// - 跨组按词语文本去重，保留分组顺序靠前的一条，避免一场默写重复写同一个词
+///
 /// 选了父分组就等于选了它下面所有子分组
 pub fn expand_group_ids(conn: &Connection, group_ids: &[i64]) -> AppResult<Vec<i64>> {
     if group_ids.is_empty() {

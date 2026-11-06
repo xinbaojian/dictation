@@ -31,8 +31,9 @@ tags: [index]
 | [pitfalls.md](./pitfalls.md) | 踩过的坑与规避方式 | 遇到怪问题 |
 | [roadmap.md](./roadmap.md) | 已完成里程碑与 V2 候选 | 规划下一步 |
 | [glossary.md](./glossary.md) | 术语表（分组/词条/会话/出本…） | 读代码前对齐概念 |
+| [sync.md](./sync.md) | 自有 MySQL 整库快照同步、CAS 冲突、pending 启动替换 | 配置或排查多机同步 |
 
 ## 当前状态
 
-M1–M4 全部完成：词表（多级分组 + 拖动调整结构）、默写、批改、错题本、历史、设置、手动备份、打印复习单、NSIS 安装包。
-后端 83 个单测通过（macOS）；前端 `tsc --noEmit` + `vite build` 通过。详见 [roadmap.md](./roadmap.md)。
+M1–M5 全部完成：词表（多级分组 + 拖动调整结构）、默写、批改、错题本、历史、设置、手动备份、打印复习单、NSIS 安装包、可选跨设备同步。
+后端 136 个单测通过（macOS，另有 1 个需真实服务器的集成测试默认忽略）；前端 `tsc --noEmit` + `vite build` 通过。详见 [roadmap.md](./roadmap.md)。

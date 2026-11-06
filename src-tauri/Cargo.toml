@@ -22,6 +22,12 @@ thiserror = "2"
 rand = "0.8"
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
+# 单实例：第二个进程会在启动时替换 / checkpoint 同一个 SQLite 库，
+# 与同步的 pending 替换叠加会静默丢数据，必须挡住
+tauri-plugin-single-instance = "2"
+# 自有 MySQL 快照同步（默认不启用；只有配置了连接信息才联网）
+mysql = "28.0.4"
+sha2 = "0.10"
 
 [profile.release]
 codegen-units = 1

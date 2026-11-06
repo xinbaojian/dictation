@@ -12,6 +12,11 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (5, include_str!("../../migrations/0005_word_wrong_chars.sql")),
 ];
 
+/// 当前程序认识的最大 user_version；导入同步快照时用来自拒来自更新版本的数据。
+pub fn latest_user_version() -> i64 {
+    MIGRATIONS.last().map(|(v, _)| *v).unwrap_or(0)
+}
+
 pub fn init(app: &AppHandle) -> AppResult<(Connection, PathBuf)> {
     let app_data_dir = app
         .path()
@@ -21,6 +26,13 @@ pub fn init(app: &AppHandle) -> AppResult<(Connection, PathBuf)> {
     std::fs::create_dir_all(&dir)?;
     let db_path = dir.join("dictation.db");
     let marker = marker_path(&dir);
+
+    // 上次同步下载的快照在这时落地：必须在 Connection::open 之前替换文件，
+    // 否则会动到正在被 Mutex<Connection> 持有的库。
+    // 每次启动都无条件调用（不只在 pending.db 存在时）：无 pending 时它还要负责
+    // 补提交上次「库已替换但状态没写完」的 .sync-pending-state.json，并清掉过期错误文件。
+    // apply_pending 自己会写 .sync-last-error.txt；失败不阻塞启动。
+    let _ = crate::repo::sync::apply_pending(&dir, &db_path);
 
     if !db_path.exists() {
         // 库被删掉了但 WAL 还留着时，SQLite 可能把旧页恢复出来，先清掉
@@ -43,7 +55,20 @@ pub fn init(app: &AppHandle) -> AppResult<(Connection, PathBuf)> {
     }
 
     let conn = Connection::open(&db_path)?;
+    // 迁移会加列、进而改变同步用的内容哈希；迁移前先记一份，迁移后好把同步基准一起挪过去
+    let needs_migration = {
+        let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap_or(0);
+        current < latest_user_version()
+    };
+    let hash_before = if needs_migration {
+        crate::repo::sync::content_hash(&conn).ok()
+    } else {
+        None
+    };
     prepare(&conn)?;
+    if let Some(before) = hash_before {
+        crate::repo::sync::rebase_baseline_after_migration(&dir, &before, &conn);
+    }
     // 记录「这个目录已经初始化过」：以后用户再删库，不会又把旧位置的数据搬回来
     let _ = std::fs::write(&marker, b"");
     Ok((conn, dir))
@@ -129,7 +154,7 @@ fn resolve_dir(fallback: &Path) -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         let _ = std::fs::create_dir_all(fallback);
-        return fallback.to_path_buf();
+        fallback.to_path_buf()
     }
     #[cfg(not(target_os = "macos"))]
     {

@@ -12,6 +12,9 @@ import type {
   SessionSummary,
   Settings,
   SplitResult,
+  SyncConfig,
+  SyncOutcome,
+  SyncStatus,
   Word,
   WrongMark,
 } from "../types";
@@ -79,6 +82,21 @@ export const api = {
   appVersion: () => invoke<string>("app_version"),
   /** 重启后当前进程立刻退出，invoke 会抛错，调用方需忽略 */
   restartApp: () => invoke<void>("restart_app"),
+
+  // 跨设备同步：默认完全离线，只有配置了自有 MySQL 才会有网络请求
+  syncStatus: () => invoke<SyncStatus>("sync_status"),
+  /** password 传 null / 空串表示沿用已保存的密码；状态返回值永远不含密码 */
+  saveSyncConfig: (config: SyncConfig, password: string | null) =>
+    invoke<SyncStatus>("save_sync_config", { config, password }),
+  /** 测连接，不落盘：传当前表单即可，避免为了试一个错端口覆盖掉能用的凭据 */
+  testSyncConnection: (config: SyncConfig | null, password: string | null) =>
+    invoke<string>("test_sync_connection", { config, password }),
+  syncPush: (force: boolean) => invoke<SyncOutcome>("sync_push", { force }),
+  syncPull: (force: boolean) => invoke<SyncOutcome>("sync_pull", { force }),
+  /** 放弃已下载但还没应用的 pending 快照 / 清除失败提示；不改动主库与主状态 */
+  discardSyncPending: () => invoke<SyncStatus>("sync_discard_pending"),
+  /** 隔离损坏的 .sync-state.json 并重建；仅在 status.stateCorrupt 为 true 时调用 */
+  repairSyncState: () => invoke<SyncStatus>("sync_repair_state"),
 };
 
 export function errorMessage(err: unknown): string {

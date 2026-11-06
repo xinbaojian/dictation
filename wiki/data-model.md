@@ -71,6 +71,14 @@ related: [quiz-flow.md, architecture.md]
 
 键值表，V1 只有一行：`key='app'`，值是一段 JSON（`maskSeconds / streakToMaster / wordFontSize`；连字已挪到每场默写的抽词偏好）。读时解析失败一律回落默认值；结构体带 `#[serde(default)]`，新增字段对旧库天然兼容（缺字段 = 默认值）。
 
+### _sync_meta（只在同步启用后出现）
+
+`key TEXT PRIMARY KEY, value TEXT NOT NULL`，单行 `key='meta'`，值是 `SnapshotMeta` JSON（deviceId / deviceName / appVersion / userVersion / exportedAt / contentHash）。由 `repo/sync.rs::create_snapshot` 写进快照，**拉取替换后主库也会带着它**——所以这个表是「本机库是不是那份快照」的唯一正面证据（`commit_pending_state` 靠它决定是否补提交状态）。
+
+- 不参与 `content_hash`（否则每次导出都会自我改变）
+- 不参与任何业务查询；`settings` 与它都被显式排除在哈希之外，见 [sync.md](./sync.md)
+- `schema` 版本也不进哈希（`PRAGMA user_version` 变了只说明跑过迁移），版本兼容由快照导入前的 `uv > latest` 检查负责
+
 ## 不变量
 
 1. 错题本 ≡ `words.status = 'learning'`，没有独立表

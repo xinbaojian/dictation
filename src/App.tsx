@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import appIconUrl from "../app-icon.svg?url";
+import { api } from "./lib/ipc";
 import { useAutoUpdate } from "./lib/updater";
 import History from "./pages/History";
 import Mistakes from "./pages/Mistakes";
@@ -30,6 +31,42 @@ const NAV = [
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: "pick" });
   const updater = useAutoUpdate();
+  // 启动时看一眼同步状态：拉取后重启失败、或有快照待生效时，用户不该只能靠「自己想起来去设置页看」
+  const [syncNotice, setSyncNotice] = useState<{ title: string; message: string } | null>(null);
+  // 「知道了」只消音当前这条内容；内容变了（新事件）仍要重新提示
+  const [dismissedNotice, setDismissedNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    // 每次离开设置页都重取一次：用户可能刚在那里「放弃快照 / 清除错误提示」，
+    // 只在挂载时读一次会让横幅与实际状态相反
+    if (route.name === "settings") return;
+    let alive = true;
+    (async () => {
+      try {
+        const s = await api.syncStatus();
+        if (!alive) return;
+        let next: { title: string; message: string } | null = null;
+        if (s.warning) next = { title: "同步配置需要处理", message: s.warning };
+        else if (s.lastError?.includes("替换成功"))
+          // 库已经换成本次快照（坏库恢复 / 状态没写成）：结果通报，不是失败告警
+          next = { title: "云端快照已生效", message: s.lastError };
+        else if (s.lastError)
+          next = {
+            title: s.pending ? "同步快照待生效" : "上次同步没有完成",
+            message: s.lastError,
+          };
+        else if (s.pending)
+          next = { title: "同步快照待生效", message: "已下载云端快照，重启应用后生效" };
+        // 用户点过「知道了」的那条内容不再弹；新内容（提示变了）照常弹
+        setSyncNotice(next && next.message === dismissedNotice ? null : next);
+      } catch {
+        // 读不到同步状态不影响默写，设置页里有完整提示
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [route.name, dismissedNotice]);
 
   const activeNav = route.name === "quiz" || route.name === "review" ? "pick" : route.name;
   const startSession = (sessionId: number) => setRoute({ name: "quiz", sessionId });
@@ -37,8 +74,10 @@ export default function App() {
 
   const updateAvailable = updater.state.phase === "available" && !updater.state.dismissed;
   // 默写、批改、打印、设置页不弹横幅：前者不能打断孩子，设置页自己有完整卡片
-  const showUpdateBanner =
-    updateAvailable && !["quiz", "review", "print", "settings"].includes(route.name);
+  const quietRoute = ["quiz", "review", "print", "settings"].includes(route.name);
+  const showUpdateBanner = updateAvailable && !quietRoute;
+  const showSyncBanner = !!syncNotice && !quietRoute;
+  const settingsDot = updateAvailable || !!syncNotice;
 
   return (
     <div className="flex h-full">
@@ -74,7 +113,7 @@ export default function App() {
           }
         >
           设置
-          {updateAvailable && (
+          {settingsDot && (
             <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-amber-500" />
           )}
         </button>
@@ -98,6 +137,30 @@ export default function App() {
               className="shrink-0 rounded px-2 py-1 text-amber-700 hover:bg-amber-100"
             >
               稍后
+            </button>
+          </div>
+        )}
+
+        {showSyncBanner && (
+          <div className="no-print flex shrink-0 items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-900">
+            <span className="shrink-0 font-medium">{syncNotice!.title}</span>
+            <span className="hidden min-w-0 flex-1 truncate text-amber-700 sm:block">
+              {syncNotice!.message}
+            </span>
+            <button
+              onClick={() => setRoute({ name: "settings" })}
+              className="shrink-0 rounded bg-amber-600 px-3 py-1 font-medium text-white hover:bg-amber-700"
+            >
+              去设置
+            </button>
+            <button
+              onClick={() => {
+                setDismissedNotice(syncNotice!.message);
+                setSyncNotice(null);
+              }}
+              className="shrink-0 rounded px-2 py-1 text-amber-700 hover:bg-amber-100"
+            >
+              知道了
             </button>
           </div>
         )}

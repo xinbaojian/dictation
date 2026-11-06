@@ -1,8 +1,8 @@
 ---
 title: 架构
-updated: 2026-11-04
+updated: 2026-11-05
 tags: [architecture, rust, tauri]
-related: [data-model.md, frontend.md, decisions.md]
+related: [data-model.md, frontend.md, decisions.md, sync.md]
 ---
 
 # 架构
@@ -11,7 +11,8 @@ related: [data-model.md, frontend.md, decisions.md]
 
 ```
 React 页面 ──invoke──> commands/*.rs ──> repo/*.rs ──> rusqlite ──> SQLite
-                            │
+                            │                  │
+                            │                  └──> 自有 MySQL（仅快照同步，可选）
                             └──> domain/*.rs（纯逻辑：切分、抽题、状态机）
 ```
 
@@ -27,7 +28,7 @@ React 页面 ──invoke──> commands/*.rs ──> repo/*.rs ──> rusqlit
 | 字段 | 作用 |
 |---|---|
 | `db: Mutex<Connection>` | 单连接 + WAL。单机单用户，不需要连接池 |
-| `data_dir: PathBuf` | 程序同级目录（不可写则回落 `app_data_dir()`），库与备份都放这里 |
+| `data_dir: PathBuf` | 程序同级目录（不可写则回落 `app_data_dir()`），库、备份与同步状态都放这里 |
 | `speaker: Arc<dyn Speaker>` | TTS 预留位，V1 注入 `NullSpeaker` |
 
 命令拿连接统一走 `AppState::conn()`，锁中毒会返回中文错误而不是 panic。
@@ -40,13 +41,14 @@ React 页面 ──invoke──> commands/*.rs ──> repo/*.rs ──> rusqlit
 
 - 命令参数/返回值用 `#[serde(rename_all = "camelCase")]`，JS 侧 camelCase，Rust 侧 snake_case，由 Tauri 自动转换
 - 返回类型必须是可 Serialize 的 DTO，禁止把 `rusqlite::Row` 之类的内部类型漏出去
-- 共 31 个命令，分三组：`commands/library.rs`（词表 11）、`commands/quiz.rs`（默写/错题 13）、`commands/system.rs`（设置/备份 7）
+- 共 41 个命令，分四组：`commands/library.rs`（词表 11）、`commands/quiz.rs`（默写/错题 14）、`commands/system.rs`（设置/备份 9）、`commands/sync.rs`（跨设备同步 7）
 
 ## 数据库连接约定
 
 - 打开后立刻 `PRAGMA journal_mode = WAL` 与 `PRAGMA foreign_keys = ON`
 - 迁移用 `PRAGMA user_version` 递增，脚本只能用一次（详见 [data-model.md](./data-model.md)）
 - 批量写入用 `unchecked_transaction()`（拿到的是 `&Connection`，不是 `&mut`）
+- 同步快照的替换发生在 `db::init` 打开连接**之前**（`repo/sync.rs::apply_pending`）；网络命令用 `async fn` + `spawn_blocking`，`MutexGuard` 绝不跨 await。详见 [sync.md](./sync.md)
 
 ## TTS 预留
 

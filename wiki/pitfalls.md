@@ -167,3 +167,15 @@ NSIS 安装包，装到 `Program Files` 后数据目录会回落到 `%APPDATA%\c
 **做法**：升级前在「设置 → 数据与备份」导出备份，装完再导入；不要改 updater 去指向便携版 exe
 （没有签名产物、也没有安装流程）。macOS 数据目录恒在 `~/Library/Application Support/com.dictation.desktop`，
 不受影响。密钥与清单的其它坑见 [updater.md](./updater.md)。
+
+## 22. 单实例插件会静默吃掉「第二个进程」
+
+`tauri-plugin-single-instance` 注册后，第二次启动会在插件 setup 里直接退出进程，只把已有窗口提到前台。
+两个副作用要知道：
+
+- **便携版从另一个文件夹再开一份会被当成重复实例**，不会出现第二个窗口（数据目录不同也一样挡）。
+- `npm run tauri dev` 与已安装版同时存在时，dev 进程会静默退出、控制台什么都不打，很容易被误判成「启动失败」。
+  开发时先退掉已安装的 `Dictation.app`。
+
+**为什么必须有**：第二个进程会在启动时 `wal_checkpoint` 甚至替换同一个 SQLite 库，与同步的
+`pending.db` 替换叠加，旧实例的写入会落进被 unlink 的 inode（静默丢数据）。见 AGENTS.md 硬约束 11。

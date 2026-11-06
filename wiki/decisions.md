@@ -1,6 +1,6 @@
 ---
 title: 设计决策（ADR）
-updated: 2026-11-04
+updated: 2026-11-05
 tags: [adr, decisions]
 related: [overview.md, quiz-flow.md]
 ---
@@ -111,3 +111,12 @@ related: [overview.md, quiz-flow.md]
 - **理由**：家长在作业本上看到错字时没有「会话」可挂。为了记几个字去插一条 `sessions` + `session_items`，历史里会冒出一场只有 1 个词的假默写，统计全被污染
 - **代价**：错字有了两个来源，读取端必须并集（`words::load_char_marks`、`sessions::weak_chars`）；改词文本会让老下标失效，所以 `words::update` 在文本变化时清空手工标记
 - **不做**：不新增 mistakes / char_marks 表——错题本仍等价于 `status='learning'`（ADR-3），这里只补「字」这一层信息
+
+## ADR-17 跨设备同步用整库快照，不做行级复制
+
+- **结论**：本地 SQLite 永远是唯一主库。用户显式配置自有 MySQL 后，云端只存 `dictation_snapshot` 表的单行（`LONGBLOB` 快照 + `version`）；推送用 `UPDATE ... WHERE id=1 AND version=?` 的 CAS 乐观锁，拉取写 `pending.db`，下次启动由 `db::init` 在打开连接前替换。
+- **理由**：`0001_init.sql` 的 4 张表都是自增整数主键，跨机按行合并必撞 id；进度「只增 / 归零」语义用 last-write-wins 会抹掉另一台的成绩；`ON DELETE CASCADE` 还要墓碑，`sessions.config_json` 里的分组 id 跨机无效。整库快照一次绕开全局 ID、事件日志、冲突时钟与离线写队列，且会话历史、设置、错字标记全量保真。
+- **取舍**：同一时刻只应有一台设备推进数据；两台都改过时**不自动合并**，弹 `ConfirmModal` 让用户决定是否覆盖（覆盖前自动完整备份）。对「家里两台电脑轮流陪孩子默写」足够。
+- **定位**：默认纯离线；只有用户填了自有服务信息才联网，且无账号、无厂商云。不推翻「单机离线」的产品定义，只是把「唯一联网行为」改成「默认唯一联网行为」。
+- **边界**：整库恢复是数据目录级操作，不算「改进度」，不违反硬约束 1；但同步绝不能成为业务写入口。凭据绝不进 `settings` 表、绝不回传前端。
+- **实现**：`repo/sync.rs` 的 `SnapshotStore` trait（当前 `MysqlStore`，将来可换 HTTP API）、`VACUUM INTO` 快照、`content_hash`、`apply_pending`。详见 [sync.md](./sync.md)

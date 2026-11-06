@@ -4,7 +4,24 @@ import { Toast, useNotice } from "../components/Toast";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorMessage } from "../lib/ipc";
 import type { UpdaterController } from "../lib/updater";
-import type { BackupInfo, Settings as SettingsType } from "../types";
+import type {
+  BackupInfo,
+  Settings as SettingsType,
+  SyncConfig,
+  SyncStatus,
+} from "../types";
+
+const INPUT =
+  "w-full rounded-md border border-stone-200 px-2.5 py-1.5 text-sm text-stone-700 outline-none focus:border-stone-400";
+
+const EMPTY_SYNC_FORM: SyncConfig = {
+  enabled: false,
+  host: "",
+  port: 3306,
+  database: "",
+  user: "",
+  deviceName: "",
+};
 
 const MASK_OPTIONS = [
   { value: 2, label: "2 秒" },
@@ -31,6 +48,20 @@ function formatDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("zh-CN");
 }
 
+/** 后端写的是 UTC（`...Z`），必须交给 Date 转本地时区，截字符串会差 8 小时 */
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 export default function Settings({ updater }: { updater: UpdaterController }) {
   const [value, setValue] = useState<SettingsType | null>(null);
   const [backups, setBackups] = useState<BackupInfo[]>([]);
@@ -38,6 +69,17 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
   const [backupDir, setBackupDir] = useState("");
   const [importing, setImporting] = useState<{ name: string; path: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sync, setSync] = useState<SyncStatus | null>(null);
+  const [syncForm, setSyncForm] = useState<SyncConfig | null>(null);
+  // 端口单独存字符串：直接受控到 number 上的话，用户删空会立刻变回 0，
+  // 没法把旧值删掉重打。提交时再解析成数字。
+  const [portText, setPortText] = useState("3306");
+  const [syncPassword, setSyncPassword] = useState("");
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncConflict, setSyncConflict] = useState<{ action: "push" | "pull"; message: string } | null>(null);
+  const [syncError, setSyncError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [syncAction, setSyncAction] = useState<"discard" | "clearError" | "repair" | null>(null);
   const { notice, notify } = useNotice();
   const u = updater.state;
   const updateBusy = u.phase === "checking" || u.phase === "downloading" || u.phase === "installing";
@@ -54,7 +96,24 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
         setBackups(list);
         setDataDir(dir);
       } catch (e) {
+        // 别让页面停在「加载中…」：把失败原因显示出来，用户至少知道要重试
+        setLoadError(errorMessage(e));
         notify("error", errorMessage(e));
+      }
+      // 同步状态单独取：坏掉的 .sync-state.json / 凭据文件不能让整个设置页卡在「加载中…」。
+      // 即使失败也要给一份空表单，用户仍可重新保存配置来修复凭据。
+      try {
+        const syncState = await api.syncStatus();
+        setSync(syncState);
+        setSyncForm(syncState.config);
+        setPortText(String(syncState.config.port || 3306));
+        setSyncError("");
+      } catch (e) {
+        setSync(null);
+        setSyncForm(EMPTY_SYNC_FORM);
+        setPortText(String(EMPTY_SYNC_FORM.port));
+        setSyncError(errorMessage(e));
+        notify("error", "同步状态读取失败：" + errorMessage(e));
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -123,8 +182,117 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
     }
   };
 
+  /** 拿到新状态后同步「表单 + 端口文本」；漏掉端口文本会让输入框显示旧值 */
+  const applySyncStatus = (s: SyncStatus) => {
+    setSync(s);
+    setSyncForm(s.config);
+    setPortText(String(s.config.port || 3306));
+  };
+
+  const saveSync = async () => {
+    if (!syncForm || syncBusy) return;
+    setSyncBusy(true);
+    try {
+      applySyncStatus(await api.saveSyncConfig(syncForm, syncPassword || null));
+      setSyncPassword("");
+      setSyncError("");
+      notify("ok", "同步配置已保存");
+    } catch (e) {
+      notify("error", errorMessage(e));
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
+  const testSync = async () => {
+    if (syncBusy || !syncForm) return;
+    setSyncBusy(true);
+    try {
+      // 直接用当前表单测，不落盘：试错端口不会把已经能用的凭据覆盖掉
+      const v = await api.testSyncConnection(syncForm, syncPassword || null);
+      notify("ok", "连接成功：MySQL " + v);
+    } catch (e) {
+      notify("error", errorMessage(e));
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
+  const runSync = async (action: "push" | "pull", force = false) => {
+    if (syncBusy) return;
+    setSyncBusy(true);
+    try {
+      const r = action === "push" ? await api.syncPush(force) : await api.syncPull(force);
+      if (r.needsConfirm) {
+        setSyncConflict({ action, message: r.message });
+      } else {
+        notify(r.kind === "empty" ? "error" : "ok", r.message);
+        setSync(await api.syncStatus());
+        setSyncError("");
+      }
+    } catch (e) {
+      notify("error", errorMessage(e));
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
+  const confirmSync = () => {
+    const action = syncConflict?.action;
+    setSyncConflict(null);
+    if (action) void runSync(action, true);
+  };
+
+  const runSyncAction = async (action: "discard" | "clearError" | "repair") => {
+    if (syncBusy) return;
+    setSyncBusy(true);
+    try {
+      const s = action === "repair" ? await api.repairSyncState() : await api.discardSyncPending();
+      // 只更新状态，别用已保存的配置覆盖用户正在编辑的表单
+      setSync(s);
+      setSyncError("");
+      notify(
+        "ok",
+        action === "repair"
+          ? "同步状态已重建；下一次推送/拉取会先让你确认，不会自动覆盖云端"
+          : action === "discard"
+            ? "已放弃待应用快照，本机数据没有改动"
+            : "已清除错误提示",
+      );
+    } catch (e) {
+      notify("error", errorMessage(e));
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
+  const confirmSyncAction = () => {
+    const action = syncAction;
+    setSyncAction(null);
+    if (action) void runSyncAction(action);
+  };
+
+  /** 重启后当前进程立刻退出，invoke 一定会抛错，这里必须忽略 */
+  const restartNow = async () => {
+    try {
+      await api.restartApp();
+    } catch {
+      // 进程已退出，忽略
+    }
+  };
+
+  // 表单与已保存配置不一致（含还没保存的新密码）：推送/拉取用的是后端已保存的配置，
+  // 脏着点下去只会拿旧密码去连，用户会误判成「新密码不对」，所以必须先保存
+  const syncDirty =
+    syncPassword !== "" ||
+    (!!syncForm && !!sync && JSON.stringify(syncForm) !== JSON.stringify(sync.config));
+
   if (!value) {
-    return <div className="flex flex-1 items-center justify-center text-sm text-stone-400">加载中…</div>;
+    return (
+      <div className="flex flex-1 items-center justify-center text-sm text-stone-400">
+        {loadError ? "设置加载失败：" + loadError : "加载中…"}
+      </div>
+    );
   }
 
   return (
@@ -215,7 +383,7 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
             <div>
               <h2 className="text-sm font-medium text-stone-700">数据与备份</h2>
               <p className="mt-1 text-xs text-stone-500">
-                数据只存在本机；换电脑或重装前先导出备份
+                数据默认只存本机；启用同步后云端会有一份整库快照。换电脑或重装前先导出备份
               </p>
             </div>
             <div className="flex shrink-0 gap-2">
@@ -295,6 +463,229 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
           </div>
           <p className="mt-3 text-[11px] leading-relaxed text-stone-400">
             导入是合并而非覆盖：同编号同名的分组视为同一个，已存在的词跳过，不影响现有进度。
+          </p>
+        </section>
+
+        <section className="mt-5 rounded-xl border border-stone-200 bg-white p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-medium text-stone-700">跨设备同步（自有数据库）</h2>
+              <p className="mt-1 text-xs text-stone-500">
+                数据仍以本机为准；配置后把整个库作为快照传到你自己的 MySQL，离线照常使用
+              </p>
+            </div>
+            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-stone-600">
+              <input
+                type="checkbox"
+                checked={syncForm?.enabled ?? false}
+                onChange={(e) =>
+                  setSyncForm(syncForm ? { ...syncForm, enabled: e.target.checked } : syncForm)
+                }
+                className="h-4 w-4"
+              />
+              启用
+            </label>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="mb-1 block text-xs text-stone-500">主机（Tailscale 地址）</span>
+              <input
+                className={INPUT}
+                value={syncForm?.host ?? ""}
+                placeholder="100.91.153.120"
+                onChange={(e) =>
+                  setSyncForm(syncForm ? { ...syncForm, host: e.target.value } : syncForm)
+                }
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-stone-500">端口</span>
+              <input
+                className={INPUT}
+                value={portText}
+                placeholder="4407"
+                inputMode="numeric"
+                onChange={(e) => {
+                  // 只留数字，并且空串要能留住（否则删到一半就跳回 0，改不动旧值）；
+                  // 超过 65535 时把显示值也钳住，否则输入框写着 70000、存下去却是 65535
+                  let next = e.target.value.replace(/[^\d]/g, "").slice(0, 5);
+                  if (next !== "" && Number(next) > 65535) next = "65535";
+                  setPortText(next);
+                  setSyncForm(
+                    syncForm ? { ...syncForm, port: next === "" ? 0 : Number(next) } : syncForm,
+                  );
+                }}
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-stone-500">数据库名</span>
+              <input
+                className={INPUT}
+                value={syncForm?.database ?? ""}
+                placeholder="dictation_sync"
+                onChange={(e) =>
+                  setSyncForm(syncForm ? { ...syncForm, database: e.target.value } : syncForm)
+                }
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-stone-500">账号</span>
+              <input
+                className={INPUT}
+                value={syncForm?.user ?? ""}
+                placeholder="dictation"
+                onChange={(e) =>
+                  setSyncForm(syncForm ? { ...syncForm, user: e.target.value } : syncForm)
+                }
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-stone-500">
+                密码{sync?.hasPassword ? "（留空表示不改）" : ""}
+              </span>
+              <input
+                className={INPUT}
+                type="password"
+                value={syncPassword}
+                placeholder="••••••••"
+                onChange={(e) => setSyncPassword(e.target.value)}
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-stone-500">本机名称</span>
+              <input
+                className={INPUT}
+                value={syncForm?.deviceName ?? ""}
+                placeholder="书房电脑"
+                onChange={(e) =>
+                  setSyncForm(syncForm ? { ...syncForm, deviceName: e.target.value } : syncForm)
+                }
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              onClick={saveSync}
+              disabled={syncBusy || !!syncConflict}
+              className="rounded-md bg-stone-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-900 disabled:opacity-50"
+            >
+              保存配置
+            </button>
+            <button
+              onClick={testSync}
+              disabled={syncBusy || !!syncConflict}
+              className="rounded-md border border-stone-200 px-3 py-1.5 text-xs text-stone-600 hover:bg-stone-50 disabled:opacity-50"
+            >
+              测试连接
+            </button>
+            <button
+              onClick={() => void runSync("push")}
+              disabled={
+                syncBusy ||
+                !!syncConflict ||
+                !!sync?.pending ||
+                !!sync?.warning ||
+                !sync?.enabled ||
+                syncDirty
+              }
+              className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+            >
+              推送到云端
+            </button>
+            <button
+              onClick={() => void runSync("pull")}
+              disabled={
+                syncBusy ||
+                !!syncConflict ||
+                !!sync?.pending ||
+                !!sync?.warning ||
+                !sync?.enabled ||
+                syncDirty
+              }
+              className="rounded-md border border-amber-300 px-3 py-1.5 text-xs text-amber-800 hover:bg-amber-50 disabled:opacity-50"
+            >
+              从云端拉取
+            </button>
+            {(sync?.pending || sync?.lastError) && (
+              <button
+                onClick={() => setSyncAction(sync?.pending ? "discard" : "clearError")}
+                disabled={syncBusy}
+                className="rounded-md border border-stone-200 px-3 py-1.5 text-xs text-stone-500 hover:bg-stone-50 disabled:opacity-50"
+              >
+                {sync?.pending ? "放弃待应用快照" : "清除错误提示"}
+              </button>
+            )}
+            {sync?.stateCorrupt && (
+              <button
+                onClick={() => setSyncAction("repair")}
+                disabled={syncBusy}
+                className="rounded-md border border-red-300 px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50"
+              >
+                重置同步状态
+              </button>
+            )}
+          </div>
+
+          {syncDirty && (
+            <p className="mt-2 text-[11px] leading-relaxed text-amber-700">
+              配置有改动还没保存（含密码）。推送/拉取用的是已保存的配置，请先点「保存配置」。
+            </p>
+          )}
+
+          {(syncError || sync?.warning) && (
+            <p className="mt-3 break-all rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] leading-relaxed text-red-700">
+              {syncError || sync?.warning}
+              <br />
+              {sync?.stateCorrupt
+                ? "推送与拉取已暂停。可点「重置同步状态」隔离损坏文件并重建（本机词库与进度不变）。"
+                : "推送与拉取已暂停。按上面的提示处理后即可恢复；凭据文件损坏时，把主机、账号、密码重新填一遍再保存会覆盖掉坏文件。"}
+            </p>
+          )}
+
+          {sync?.lastError && sync.lastError.includes("替换成功") && (
+            <p className="mt-3 break-all rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] leading-relaxed text-emerald-800">
+              {sync.lastError}
+              <br />
+              本机数据已经是云端快照的内容，无需任何操作；点「清除错误提示」关闭这条消息。
+            </p>
+          )}
+
+          {sync?.lastError && !sync.lastError.includes("替换成功") && (
+            <p className="mt-3 break-all rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+              上次同步快照没有顺利完成：{sync.lastError}
+              <br />
+              本机数据未被改动、云端快照仍在。
+              {sync?.pending
+                ? "快照已下载但这次没能应用（多因数据库被其他程序短暂占用），重启应用后会自动重试；也可点「放弃待应用快照」。"
+                : "可以重新拉取，或点「清除错误提示」忽略。"}
+            </p>
+          )}
+
+          <div className="mt-3 rounded-md bg-stone-50 px-3 py-2 text-[11px] leading-relaxed text-stone-500">
+            {sync?.configured ? "已配置" : "未配置"} · 设备 {sync?.deviceId ? sync.deviceId.slice(0, 8) : "…"} ·{" "}
+            {sync?.lastSyncAt
+              ? "上次同步 " +
+                (formatDateTime(sync.lastSyncAt) || sync.lastSyncAt.slice(0, 16).replace("T", " ")) +
+                (sync.lastSyncFrom ? "（来自 " + sync.lastSyncFrom + "）" : "")
+              : "还没同步过"}
+            {sync?.pending && (
+              <p className="mt-1 font-medium text-amber-700">
+                有下载好的快照待应用，重启应用后生效；重启前同步按钮已禁用。
+                <button
+                  onClick={() => void restartNow()}
+                  className="ml-2 rounded border border-amber-300 bg-white px-2 py-0.5 text-[11px] font-normal text-amber-800 hover:bg-amber-50"
+                >
+                  立即重启
+                </button>
+              </p>
+            )}
+          </div>
+
+          <p className="mt-3 text-[11px] leading-relaxed text-stone-400">
+            密码只写在本机数据目录的私有文件（类 Unix 下权限 600），不回传界面、不进备份文件。
+            两台都改过时会先询问；覆盖前自动把当前库完整备份到 backups/sync/。未启用时程序完全离线。
           </p>
         </section>
 
@@ -386,7 +777,8 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
           )}
 
           <p className="mt-3 text-[11px] leading-relaxed text-stone-400">
-            学习数据不会上传。检查与下载更新需要联网，离线时程序照常使用；安装前会校验发布包签名。
+            未配置自有同步服务时，唯一的联网行为是检查更新；配置后学习数据只以整库快照形式传到你自己的数据库。
+            离线时程序照常使用；安装前会校验发布包签名。
           </p>
         </section>
       </div>
@@ -400,6 +792,42 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
           confirmText="导入"
           onCancel={() => setImporting(null)}
           onConfirm={doImport}
+        />
+      )}
+
+      {syncConflict && (
+        <ConfirmModal
+          title="同步存在冲突"
+          body={syncConflict.message}
+          confirmText="继续覆盖"
+          cancelText="取消"
+          onCancel={() => setSyncConflict(null)}
+          onConfirm={confirmSync}
+        />
+      )}
+
+      {syncAction && (
+        <ConfirmModal
+          title={
+            syncAction === "repair"
+              ? "重置同步状态"
+              : syncAction === "discard"
+                ? "放弃待应用快照"
+                : "清除错误提示"
+          }
+          body={
+            syncAction === "repair"
+              ? "损坏的 .sync-state.json 会被移到 backups/sync/ 留档，然后重建一份新状态；如果还有没应用的待同步快照，也会一起作废（云端快照仍在，可以重新拉取）。本机词库和进度不会变，但本机记录的版本号会归零，下一次推送或拉取会先让你确认是否覆盖云端。"
+              : syncAction === "discard"
+                ? "已下载但还没应用的快照会被丢弃，本机词库和进度不会变。云端快照仍在，之后可以重新拉取。"
+                : "只清掉「上次同步没顺利完成」的提示文字，不动本机数据、不动云端快照，也不改动同步状态。"
+          }
+          confirmText={
+            syncAction === "repair" ? "确认重置" : syncAction === "discard" ? "确认放弃" : "确认清除"
+          }
+          cancelText="取消"
+          onCancel={() => setSyncAction(null)}
+          onConfirm={confirmSyncAction}
         />
       )}
 
