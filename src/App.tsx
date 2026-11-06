@@ -3,6 +3,7 @@ import appIconUrl from "../app-icon.svg?url";
 import { api } from "./lib/ipc";
 import { useAutoUpdate } from "./lib/updater";
 import History from "./pages/History";
+import MathSheetPage from "./pages/math/MathSheet";
 import Mistakes from "./pages/Mistakes";
 import Pick from "./pages/Pick";
 import PrintSheet from "./pages/PrintSheet";
@@ -10,31 +11,20 @@ import Quiz from "./pages/Quiz";
 import Review from "./pages/Review";
 import SettingsPage from "./pages/Settings";
 import Wordbook from "./pages/Wordbook";
-
-type Route =
-  | { name: "pick" }
-  | { name: "wordbook" }
-  | { name: "mistakes" }
-  | { name: "history" }
-  | { name: "settings" }
-  | { name: "quiz"; sessionId: number }
-  | { name: "review"; sessionId: number }
-  | { name: "print"; mode: "mistakes" | "group"; groupId: number | null; title: string };
-
-const NAV = [
-  { name: "pick", label: "默写" },
-  { name: "wordbook", label: "词表" },
-  { name: "mistakes", label: "错题" },
-  { name: "history", label: "记录" },
-] as const;
+import { NAV_BY_TOOL, TOOLS, type Route, type ToolId } from "./tools/registry";
 
 export default function App() {
-  const [route, setRoute] = useState<Route>({ name: "pick" });
+  const [route, setRoute] = useState<Route>(TOOLS[0].home);
+  // 设置是全局页：进了设置后，顶栏仍保持「从哪个工具进来的」高亮
+  const [lastTool, setLastTool] = useState<ToolId>("dictation");
   const updater = useAutoUpdate();
   // 启动时看一眼同步状态：拉取后重启失败、或有快照待生效时，用户不该只能靠「自己想起来去设置页看」
   const [syncNotice, setSyncNotice] = useState<{ title: string; message: string } | null>(null);
   // 「知道了」只消音当前这条内容；内容变了（新事件）仍要重新提示
   const [dismissedNotice, setDismissedNotice] = useState<string | null>(null);
+
+  // 各工具 page 取值全局唯一（pick/wordbook/…/sheet），可当路由 key 用
+  const routeKey = route.name === "settings" ? "settings" : route.page;
 
   useEffect(() => {
     // 每次离开设置页都重取一次：用户可能刚在那里「放弃快照 / 清除错误提示」，
@@ -60,53 +50,64 @@ export default function App() {
         // 用户点过「知道了」的那条内容不再弹；新内容（提示变了）照常弹
         setSyncNotice(next && next.message === dismissedNotice ? null : next);
       } catch {
-        // 读不到同步状态不影响默写，设置页里有完整提示
+        // 读不到同步状态不影响使用，设置页里有完整提示
       }
     })();
     return () => {
       alive = false;
     };
-  }, [route.name, dismissedNotice]);
+  }, [routeKey, dismissedNotice]);
 
-  const activeNav = route.name === "quiz" || route.name === "review" ? "pick" : route.name;
-  const startSession = (sessionId: number) => setRoute({ name: "quiz", sessionId });
-  const openReview = (sessionId: number) => setRoute({ name: "review", sessionId });
+  const navigate = (next: Route) => {
+    if (next.name !== "settings") setLastTool(next.name);
+    setRoute(next);
+  };
+  const startSession = (sessionId: number) => navigate({ name: "dictation", page: "quiz", sessionId });
+  const openReview = (sessionId: number) => navigate({ name: "dictation", page: "review", sessionId });
+
+  const activeTool: ToolId = route.name === "settings" ? lastTool : route.name;
+
+  // 侧栏高亮：quiz/review 归「默写」，打印页按来源归「词表 / 错题」
+  let activeNav: string;
+  if (route.name === "settings") activeNav = "";
+  else if (route.name === "math") activeNav = "sheet";
+  else if (route.page === "quiz" || route.page === "review") activeNav = "pick";
+  else if (route.page === "print") activeNav = route.mode === "mistakes" ? "mistakes" : "wordbook";
+  else activeNav = route.page;
+
+  // 生词默写路由收窄（其它工具 / 设置页时为 null），页面挂载判断都从它取
+  const dr = route.name === "settings" || route.name === "math" ? null : route;
 
   const updateAvailable = updater.state.phase === "available" && !updater.state.dismissed;
   // 默写、批改、打印、设置页不弹横幅：前者不能打断孩子，设置页自己有完整卡片
-  const quietRoute = ["quiz", "review", "print", "settings"].includes(route.name);
+  const quietRoute = ["quiz", "review", "print", "settings"].includes(routeKey);
   const showUpdateBanner = updateAvailable && !quietRoute;
   const showSyncBanner = !!syncNotice && !quietRoute;
   const settingsDot = updateAvailable || !!syncNotice;
 
   return (
-    <div className="flex h-full">
-      <nav className="no-print flex w-16 shrink-0 flex-col items-center gap-1 border-r border-stone-200 bg-white py-3">
-        <img
-          src={appIconUrl}
-          alt=""
-          draggable={false}
-          className="mb-3 h-9 w-9 select-none"
-        />
-        {NAV.map((item) => (
+    <div className="flex h-full flex-col">
+      <header className="no-print flex h-11 shrink-0 items-center gap-1 border-b border-stone-200 bg-white px-3">
+        <img src={appIconUrl} alt="" draggable={false} className="mr-2 h-6 w-6 select-none" />
+        {TOOLS.map((t) => (
           <button
-            key={item.name}
-            onClick={() => setRoute({ name: item.name } as Route)}
+            key={t.id}
+            onClick={() => navigate(t.home)}
             className={
-              "w-11 rounded-md py-2 text-xs transition " +
-              (activeNav === item.name
+              "rounded-md px-3 py-1.5 text-xs transition " +
+              (activeTool === t.id
                 ? "bg-stone-900 font-medium text-white"
                 : "text-stone-500 hover:bg-stone-100")
             }
           >
-            {item.label}
+            {t.label}
           </button>
         ))}
         <button
           onClick={() => setRoute({ name: "settings" })}
           title="设置"
           className={
-            "relative mt-auto w-11 rounded-md py-2 text-xs transition " +
+            "relative ml-auto rounded-md px-3 py-1.5 text-xs transition " +
             (route.name === "settings"
               ? "bg-stone-900 font-medium text-white"
               : "text-stone-400 hover:bg-stone-100")
@@ -117,102 +118,136 @@ export default function App() {
             <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-amber-500" />
           )}
         </button>
-      </nav>
+      </header>
 
-      <main className="flex min-w-0 flex-1 flex-col">
-        {showUpdateBanner && (
-          <div className="no-print flex shrink-0 items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-900">
-            <span className="shrink-0 font-medium">发现新版本 v{updater.state.version}</span>
-            <span className="hidden min-w-0 flex-1 truncate text-amber-700 sm:block">
-              更新包已发布到 GitHub Release，可在设置中下载安装
-            </span>
-            <button
-              onClick={() => setRoute({ name: "settings" })}
-              className="shrink-0 rounded bg-amber-600 px-3 py-1 font-medium text-white hover:bg-amber-700"
-            >
-              去更新
-            </button>
-            <button
-              onClick={updater.dismiss}
-              className="shrink-0 rounded px-2 py-1 text-amber-700 hover:bg-amber-100"
-            >
-              稍后
-            </button>
-          </div>
-        )}
+      {showUpdateBanner && (
+        <div className="no-print flex shrink-0 items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-900">
+          <span className="shrink-0 font-medium">发现新版本 v{updater.state.version}</span>
+          <span className="hidden min-w-0 flex-1 truncate text-amber-700 sm:block">
+            更新包已发布到 GitHub Release，可在设置中下载安装
+          </span>
+          <button
+            onClick={() => setRoute({ name: "settings" })}
+            className="shrink-0 rounded bg-amber-600 px-3 py-1 font-medium text-white hover:bg-amber-700"
+          >
+            去更新
+          </button>
+          <button
+            onClick={updater.dismiss}
+            className="shrink-0 rounded px-3 py-1 text-amber-700 hover:bg-amber-100"
+          >
+            稍后
+          </button>
+        </div>
+      )}
 
-        {showSyncBanner && (
-          <div className="no-print flex shrink-0 items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-900">
-            <span className="shrink-0 font-medium">{syncNotice!.title}</span>
-            <span className="hidden min-w-0 flex-1 truncate text-amber-700 sm:block">
-              {syncNotice!.message}
-            </span>
-            <button
-              onClick={() => setRoute({ name: "settings" })}
-              className="shrink-0 rounded bg-amber-600 px-3 py-1 font-medium text-white hover:bg-amber-700"
-            >
-              去设置
-            </button>
-            <button
-              onClick={() => {
-                setDismissedNotice(syncNotice!.message);
-                setSyncNotice(null);
-              }}
-              className="shrink-0 rounded px-2 py-1 text-amber-700 hover:bg-amber-100"
-            >
-              知道了
-            </button>
-          </div>
-        )}
+      {showSyncBanner && (
+        <div className="no-print flex shrink-0 items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-900">
+          <span className="shrink-0 font-medium">{syncNotice!.title}</span>
+          <span className="hidden min-w-0 flex-1 truncate text-amber-700 sm:block">
+            {syncNotice!.message}
+          </span>
+          <button
+            onClick={() => setRoute({ name: "settings" })}
+            className="shrink-0 rounded bg-amber-600 px-3 py-1 font-medium text-white hover:bg-amber-700"
+          >
+            去设置
+          </button>
+          <button
+            onClick={() => {
+              setDismissedNotice(syncNotice!.message);
+              setSyncNotice(null);
+            }}
+            className="shrink-0 rounded px-3 py-1 text-amber-700 hover:bg-amber-100"
+          >
+            知道了
+          </button>
+        </div>
+      )}
 
-        {route.name === "wordbook" && (
-          <Wordbook
-            onPrint={(groupId, title) =>
-              setRoute({ name: "print", mode: "group", groupId, title })
-            }
-          />
-        )}
-        {route.name === "mistakes" && (
-          <Mistakes
-            onStart={startSession}
-            onGoWordbook={() => setRoute({ name: "wordbook" })}
-            onPrint={(groupId, title) => setRoute({ name: "print", mode: "mistakes", groupId, title })}
-          />
-        )}
-        {route.name === "print" && (
-          <PrintSheet
-            mode={route.mode}
-            groupId={route.groupId}
-            title={route.title}
-            onBack={() => setRoute({ name: route.mode === "mistakes" ? "mistakes" : "wordbook" } as Route)}
-          />
-        )}
-        {route.name === "history" && <History onStart={startSession} onReview={openReview} />}
-        {route.name === "settings" && <SettingsPage updater={updater} />}
-        {route.name === "quiz" && (
-          <Quiz
-            key={route.sessionId}
-            sessionId={route.sessionId}
-            onFinish={openReview}
-            onExit={() => setRoute({ name: "pick" })}
-          />
-        )}
-        {route.name === "review" && (
-          <Review
-            key={route.sessionId}
-            sessionId={route.sessionId}
-            onDone={() => setRoute({ name: "pick" })}
-            onBack={() => setRoute({ name: "pick" })}
-          />
-        )}
-        {route.name === "pick" && (
-          <Pick
-            onStart={startSession}
-            onReview={openReview}
-            onGoWordbook={() => setRoute({ name: "wordbook" })}
-          />
-        )}
-      </main>
+      <div className="flex min-h-0 flex-1">
+        <nav className="no-print flex w-16 shrink-0 flex-col items-center gap-1 border-r border-stone-200 bg-white py-3">
+          {NAV_BY_TOOL[activeTool].map((item) => (
+            <button
+              key={item.page}
+              onClick={() =>
+                navigate(
+                  activeTool === "math"
+                    ? { name: "math", page: "sheet" }
+                    : ({ name: "dictation", page: item.page } as Route),
+                )
+              }
+              className={
+                "w-11 rounded-md py-2 text-xs transition " +
+                (activeNav === item.page
+                  ? "bg-stone-900 font-medium text-white"
+                  : "text-stone-500 hover:bg-stone-100")
+              }
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
+
+        <main className="flex min-w-0 flex-1 flex-col">
+          {dr?.page === "wordbook" && (
+            <Wordbook
+              onPrint={(groupId, title) =>
+                navigate({ name: "dictation", page: "print", mode: "group", groupId, title })
+              }
+            />
+          )}
+          {dr?.page === "mistakes" && (
+            <Mistakes
+              onStart={startSession}
+              onGoWordbook={() => navigate({ name: "dictation", page: "wordbook" })}
+              onPrint={(groupId, title) =>
+                navigate({ name: "dictation", page: "print", mode: "mistakes", groupId, title })
+              }
+            />
+          )}
+          {dr?.page === "print" && (
+            <PrintSheet
+              mode={dr.mode}
+              groupId={dr.groupId}
+              title={dr.title}
+              onBack={() =>
+                navigate(
+                  dr.mode === "mistakes"
+                    ? { name: "dictation", page: "mistakes" }
+                    : { name: "dictation", page: "wordbook" },
+                )
+              }
+            />
+          )}
+          {dr?.page === "history" && <History onStart={startSession} onReview={openReview} />}
+          {route.name === "settings" && <SettingsPage updater={updater} />}
+          {dr?.page === "quiz" && (
+            <Quiz
+              key={dr.sessionId}
+              sessionId={dr.sessionId}
+              onFinish={openReview}
+              onExit={() => navigate({ name: "dictation", page: "pick" })}
+            />
+          )}
+          {dr?.page === "review" && (
+            <Review
+              key={dr.sessionId}
+              sessionId={dr.sessionId}
+              onDone={() => navigate({ name: "dictation", page: "pick" })}
+              onBack={() => navigate({ name: "dictation", page: "pick" })}
+            />
+          )}
+          {dr?.page === "pick" && (
+            <Pick
+              onStart={startSession}
+              onReview={openReview}
+              onGoWordbook={() => navigate({ name: "dictation", page: "wordbook" })}
+            />
+          )}
+          {route.name === "math" && <MathSheetPage />}
+        </main>
+      </div>
     </div>
   );
 }
