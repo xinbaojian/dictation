@@ -150,17 +150,20 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex items-start justify-between gap-4 border-b border-stone-200 px-8 py-5">
-        <div>
+        {/* min-w-0：副标题长时在这里折行，而不是把右侧按钮挤得变形 */}
+        <div className="min-w-0">
           <h1 className="text-lg font-semibold text-stone-800">错题本</h1>
           <p className="mt-1 text-sm text-stone-500">
             共 {mistakes.length} 个词 · 点词语可直接复习笔画 · 连续答对 {streak} 次自动移出
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        {/* flex-wrap：空间不够时整组按钮换行；按钮本身 shrink-0 + nowrap，文字永不折行 */}
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <select
             value={filter ?? ""}
             onChange={(e) => void changeFilter(e.target.value === "" ? null : Number(e.target.value))}
-            className="rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-sm text-stone-600"
+            title={filter == null ? "全部分组" : (groups.find((g) => g.id === filter)?.path ?? "")}
+            className="max-w-48 min-w-0 rounded-md border border-stone-200 bg-white px-2.5 py-1.5 text-sm text-stone-600"
           >
             <option value="">全部分组</option>
             {groups.filter((g) => g.learningCount > 0).map((g) => (
@@ -173,7 +176,7 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
             onClick={() => setAddOpen(true)}
             disabled={groups.length === 0}
             title={groups.length === 0 ? "先去词语表建一个分组" : "手工把一个词加入错题本"}
-            className="rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
+            className="shrink-0 whitespace-nowrap rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
             添加词语
           </button>
@@ -181,14 +184,14 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
             onClick={() => onStroke(filter, scopeLabel)}
             disabled={mistakes.length === 0}
             title="逐词看笔顺动画，可以遮住让孩子先自己写"
-            className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+            className="shrink-0 whitespace-nowrap rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
           >
             复习笔画
           </button>
           <button
             onClick={() => setAskPractice(true)}
             disabled={mistakes.length === 0 || busy}
-            className="rounded-md bg-amber-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-stone-300"
+            className="shrink-0 whitespace-nowrap rounded-md bg-amber-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-stone-300"
           >
             错题专项默写
           </button>
@@ -202,7 +205,7 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
               )
             }
             disabled={mistakes.length === 0}
-            className="rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
+            className="shrink-0 whitespace-nowrap rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
             打印复习单
           </button>
