@@ -2,68 +2,64 @@
    12 + 27 + 3 + 15 + 4 + 200 + 4 + 18 + 10 = 293mm < 296mm）。
    @page 不在此声明，由页面组件渲染（本卷满幅 margin:0）。 */
 
-.ms-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 9;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.96);
-  border-bottom: 1px solid #dcd3c2;
-  font-size: 12.5px;
-  color: #6b5c49;
-}
-.ms-tb-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-.ms-tb-title {
-  font-size: 13px;
+/* 左侧条件面板（屏幕显示，打印隐藏）：选项竖排 + 取值区间 + 操作按钮。
+   面板骨架（宽度/边框/滚动）用 Tailwind 原子类，这里只放主题化的控件样式。 */
+
+.ms-sec-title {
+  font-size: 12px;
   font-weight: 600;
   color: #3e342a;
+  letter-spacing: 0.02em;
 }
-.ms-hint {
-  color: #8a7a66;
-}
-.ms-hint em {
-  font-style: normal;
-  font-weight: 700;
-  color: #b4673a;
-}
-.ms-seg {
+
+/* 单选项行：圆角条，选中橙底白字 */
+.ms-opt {
   display: flex;
   align-items: center;
-  gap: 2px;
-  background: #f4efe6;
-  border-radius: 999px;
-  padding: 3px 6px;
-}
-.ms-seg-label {
-  margin: 0 7px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.ms-seg label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border-radius: 999px;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: 8px;
   cursor: pointer;
+  color: #6b5c49;
   white-space: nowrap;
 }
-.ms-seg label:has(input:checked) {
+.ms-opt:hover {
+  background: #f4efe6;
+}
+.ms-opt:has(input:checked) {
   background: #d9793a;
   color: #fff;
 }
-.ms-seg input {
+.ms-opt input {
   margin: 0;
   accent-color: #d9793a;
+}
+
+/* 取值区间：一行一个位置，min ~ max 两个小数字输入 */
+.ms-range-input {
+  width: 52px;
+  border: 1px solid #dcd3c2;
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #3e342a;
+  background: #fff;
+}
+.ms-range-input:focus {
+  outline: none;
+  border-color: #d9793a;
+}
+
+.ms-note {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #8a7a66;
+}
+.ms-note em {
+  font-style: normal;
+  font-weight: 700;
+  color: #b4673a;
 }
 .ms-btn {
   border: 0;

@@ -5,6 +5,7 @@ import type {
   GroupDeleteResult,
   ImportResult,
   ImportSummary,
+  MathRanges,
   MathSheet,
   Mistake,
   ReviewResult,
@@ -69,9 +70,21 @@ export const api = {
     invoke<void>("set_word_mastered", { wordId, mastered }),
 
   // 口算练习
-  /** 出一张 30 题的口算卷；当前符号组合无解时返回 null */
-  generateMathSheet: (seed: number, pos: string, op1: string, op2: string) =>
-    invoke<MathSheet | null>("generate_math_sheet", { seed, pos, op1, op2 }),
+  /** 出一张 30 题的口算卷；ranges 缺省用默认区间；无解符号组合返回 null */
+  generateMathSheet: (
+    seed: number,
+    pos: string,
+    op1: string,
+    op2: string,
+    ranges?: MathRanges,
+  ) =>
+    invoke<MathSheet | null>("generate_math_sheet", {
+      seed,
+      pos,
+      op1,
+      op2,
+      ranges: ranges ?? null,
+    }),
 
   // 设置与备份
   getSettings: () => invoke<Settings>("get_settings"),

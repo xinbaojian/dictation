@@ -202,3 +202,27 @@ export interface MathSheet {
   questions: MathQuestion[];
   blanks: number[];
 }
+
+/** 口算四位置的取值区间；字段名与后端 camelCase 对应（aMin/aMax…）。
+ *  全部为默认值（1-9 / 1-9 / 10-50 / 1-100）时走三段难度；自定义则单池平铺。 */
+export interface MathRanges {
+  aMin: number;
+  aMax: number;
+  bMin: number;
+  bMax: number;
+  cMin: number;
+  cMax: number;
+  dMin: number;
+  dMax: number;
+}
+
+export const DEFAULT_MATH_RANGES: MathRanges = {
+  aMin: 1,
+  aMax: 9,
+  bMin: 1,
+  bMax: 9,
+  cMin: 10,
+  cMax: 50,
+  dMin: 1,
+  dMax: 100,
+};
