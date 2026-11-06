@@ -111,6 +111,8 @@ export interface Settings {
   maskSeconds: number;
   streakToMaster: number;
   wordFontSize: number;
+  /** 启动时是否自动检查新版本；关闭后只能手动检查（默认开启） */
+  autoCheckUpdates: boolean;
 }
 
 /** 抽词偏好：开一场默写时勾选，全不选 = 纯随机 */

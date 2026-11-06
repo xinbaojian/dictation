@@ -3045,6 +3045,7 @@ mod tests {
                 word_font_size: 128,
                 streak_to_master: 3,
                 mask_seconds: 8,
+                auto_check_updates: false,
             },
         )
         .unwrap();
@@ -3062,6 +3063,7 @@ mod tests {
         assert_eq!(s.word_font_size, 128, "字号是本机偏好，不能被云端覆盖");
         assert_eq!(s.streak_to_master, 3, "出本阈值也不能被云端覆盖");
         assert_eq!(s.mask_seconds, 8);
+        assert!(!s.auto_check_updates, "启动自动检查开关同样是本机偏好");
         let _ = fs::remove_dir_all(&dir);
     }
 

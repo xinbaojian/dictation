@@ -65,6 +65,9 @@ function formatDateTime(iso: string): string {
 
 export default function Settings({ updater }: { updater: UpdaterController }) {
   const [value, setValue] = useState<SettingsType | null>(null);
+  // 最近一次「已保存」的设置快照：版本与更新区的开关即时生效，保存时要以它为基线，
+  // 不能把「默写」区还没点保存的表单改动顺带写进去
+  const [savedValue, setSavedValue] = useState<SettingsType | null>(null);
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [dataDir, setDataDir] = useState("");
   const [backupDir, setBackupDir] = useState("");
@@ -94,6 +97,7 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
           api.dataDirPath(),
         ]);
         setValue(cfg);
+        setSavedValue(cfg);
         setBackups(list);
         setDataDir(dir);
       } catch (e) {
@@ -124,8 +128,35 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
     if (!value || busy) return;
     setBusy(true);
     try {
-      setValue(await api.saveSettings(value));
+      const r = await api.saveSettings(value);
+      setValue(r);
+      setSavedValue(r);
       notify("ok", "设置已保存");
+    } catch (e) {
+      notify("error", errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 「启动时自动检查更新」开关：点了立即保存生效，无需再点上面的「保存设置」 */
+  const toggleAutoCheck = async () => {
+    if (!savedValue || busy) return;
+    setBusy(true);
+    try {
+      const r = await api.saveSettings({
+        ...savedValue,
+        autoCheckUpdates: !savedValue.autoCheckUpdates,
+      });
+      setSavedValue(r);
+      // 只同步开关字段回表单，别覆盖「默写」区还没保存的编辑
+      setValue((v) => (v ? { ...v, autoCheckUpdates: r.autoCheckUpdates } : r));
+      notify(
+        "ok",
+        r.autoCheckUpdates
+          ? "已开启：每次启动自动检查更新"
+          : "已关闭：启动不再自动检查，可随时手动检查",
+      );
     } catch (e) {
       notify("error", errorMessage(e));
     } finally {
@@ -707,12 +738,47 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
             </button>
           </div>
 
+          <div className="mt-4 flex items-center justify-between gap-4 border-t border-stone-100 pt-4">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-stone-600">启动时自动检查更新</p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-stone-400">
+                开启：每次启动后台静默查一次 GitHub Release；关闭：启动不联网检查，只能用上面的按钮手动检查
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!savedValue?.autoCheckUpdates}
+              onClick={() => void toggleAutoCheck()}
+              disabled={busy || !savedValue}
+              className={
+                "relative h-5 w-9 shrink-0 rounded-full transition disabled:opacity-50 " +
+                (savedValue?.autoCheckUpdates ? "bg-amber-600" : "bg-stone-300")
+              }
+            >
+              <span
+                className={
+                  "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all " +
+                  (savedValue?.autoCheckUpdates ? "left-4" : "left-0.5")
+                }
+              />
+            </button>
+          </div>
+
           {u.phase === "dev" && (
-            <p className="mt-3 text-xs text-stone-500">开发模式不检查更新；打包后的程序每次启动会自动检查一次。</p>
+            <p className="mt-3 text-xs text-stone-500">
+              开发模式不检查更新；
+              {savedValue?.autoCheckUpdates
+                ? "打包后的程序每次启动会自动检查一次。"
+                : "启动自动检查已关闭，打包后也只能手动检查。"}
+            </p>
           )}
           {u.phase === "idle" && (
             <p className="mt-3 text-xs text-stone-500">
-              {u.message || "暂无可用更新；程序每次启动会自动检查一次。"}
+              {u.message ||
+                (savedValue?.autoCheckUpdates
+                  ? "暂无可用更新；程序每次启动会自动检查一次。"
+                  : "暂无可用更新；启动自动检查已关闭，可手动检查。")}
             </p>
           )}
           {u.phase === "checking" && <p className="mt-3 text-xs text-stone-500">正在检查 GitHub Release…</p>}

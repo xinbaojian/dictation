@@ -7,7 +7,7 @@ related: [release.md, architecture.md, pitfalls.md]
 
 # 自动升级
 
-新版安装包发布在 GitHub Release；程序启动时自己检查，家长点「下载并安装」即可升级。
+新版安装包发布在 GitHub Release；程序启动时自己检查（可在「设置 → 版本与更新」关闭，默认开启，关闭后只能手动检查），家长点「下载并安装」即可升级。
 **学习数据仍只在本机 SQLite**，联网只发生在两处：GET `latest.json`、下载安装包。
 
 ## 全链路
@@ -30,6 +30,9 @@ make release v0.2.2
 |---|---|
 | 换更新源 / 换公钥 | `src-tauri/tauri.conf.json` 的 `plugins.updater` |
 | 改检查时机、提示样式、进度显示 | `src/lib/updater.ts`（状态机）+ `src/App.tsx`（横幅/红点）+ `src/pages/Settings.tsx`（卡片） |
+| 改「启动时自动检查更新」开关 | `repo/settings.rs::SettingsDto.auto_check_updates`（默认 true）+ `Settings.tsx` 开关（即时保存）+ `updater.ts` 启动 effect 的闸门 |
+| 改更新说明的渲染（新增语法 / 排版） | `src/components/Markdown.tsx`；外部链接走 `src/lib/external.ts` |
+| 改 release 说明的生成（分组 / 链接） | `scripts/gen-release-notes.mjs` |
 | 改清单内容或平台映射 | `scripts/gen-updater-manifest.mjs` |
 | 改签名产物上传 | `.github/workflows/release.yml` 的 `files:` |
 | 版本号 / 当前版本显示 | `scripts/bump-version.mjs` 同步 5 处；`commands/system.rs::app_version` 读 `CARGO_PKG_VERSION` |
@@ -83,6 +86,9 @@ make release v0.2.2
 `src/lib/updater.ts::useAutoUpdate` 管状态机（`idle/checking/available/downloading/installing/ready/error/dev`）：
 
 - 启动 3 秒后静默检查，超时 8 秒；**离线、GitHub 不可达、旧 Release 没 `latest.json` 一律静默忽略**，不弹错。
+  受设置项「启动时自动检查更新」控制（`settings` 表 `app.autoCheckUpdates`，默认开启）：开关关着就完全不发请求。
+  设置读取失败按默认「开」处理，与后端 `serde(default)` 口径一致——宁可多查一次（反正静默失败），不能让老用户升级后收不到更新提示。
+  老版本存量的设置 JSON 没有该字段，靠 `SettingsDto` 结构体级 `serde(default)` + 手写 `Default`（true）补齐，有单测兜底。
 - `Update` 对象持有 Rust 侧资源，用 ref 保活，重新检查前先 `close()`；`busyRef` 挡住连点。
 - 「忽略此版本」写 `localStorage["dictation.skipUpdateVersion"]`，只隐藏横幅，设置页仍可更新；手动检查会重新展示。
 - 开发模式（`import.meta.env.DEV`）不检查，避免开发时误装更新包。
@@ -98,7 +104,18 @@ make release v0.2.2
    `~/Library/Application Support/com.dictation.desktop`）。
 3. **macOS 装在 `/Applications`** 且由管理员安装时，普通用户可能无权替换 `.app`，更新会失败；
    `make install` 默认装 `~/Applications`，没有这个问题。
-4. `latest.json` 里 `notes` 是 Markdown 原文，前端按纯文本 `whitespace-pre-wrap` 展示，不渲染 HTML。
+4. `latest.json` 里 `notes` 是 Markdown 原文（`release-notes.md` 全文），前端用
+   `src/components/Markdown.tsx` 渲染成排版（块级：标题 / 段落 / 有序·无序列表 / 引用 / 分割线 / 围栏代码块；行内：粗体 / 斜体 / 行内代码 / 链接）；
+   **不引第三方 markdown 库、也不用 `dangerouslySetInnerHTML`**——notes 来自网络，按 HTML 解释等于让远端内容在 WebView 里执行。
+   链接点击走 `src/lib/external.ts` → `tauri-plugin-opener` 交给系统浏览器。**必须 `preventDefault`**：
+   本项目没配 `on_navigation`，Tauri 默认不拦导航，`<a href>` 会把主窗口直接导航走（白屏、也没有后退可回）；
+   `window.open` / `target="_blank"` 同样指望不上。另外 `[文字](url)` 与裸链接都只放行 http/https，且括号按深度配平
+   （`.../Foo_(bar)` 不会被截断）；
+   权限只开了 `opener:allow-open-url` + `opener:allow-default-urls`（默认集还带 `reveal_item_in_dir`，用不上就不给）。
+   **两条缺一不可**：`allow-open-url` 只开 `open_url` 命令、本身不带 scope，URL 白名单来自 `allow-default-urls`
+   的 glob（`http://*` / `https://*` / `mailto:*` / `tel:*`），只剩前者会让所有链接静默 `ForbiddenUrl`（界面只弹「打不开链接」）。
+   注意 scope 本身含 `mailto:` / `tel:`，http(s) 这条限制实际由 `external.ts` 维护；scope 里写死的协议前缀
+   是大小写敏感的（`HTTPS://…` 会被判 `ForbiddenUrl`），所以 `external.ts` 在调用前把协议头转成了小写。
 5. 改过 `gen-updater-manifest.mjs` / `release.yml` 要先提交推送再打 tag —— `make release` 只
    `git add` 那 5 个版本号文件（同 [release.md](./release.md) 的前提）。
 6. 本机 `make dmg` 会因 `hdiutil` 输出变化失败（[pitfalls.md](./pitfalls.md) 第 17 条），与更新功能无关；

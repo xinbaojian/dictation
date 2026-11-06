@@ -139,11 +139,25 @@ export function useAutoUpdate(): UpdaterController {
     }
   }, []);
 
-  // 启动 3 秒后再查，别拖慢首屏；StrictMode 的双次 effect 由 timer 清理 + busyRef 兜住
+  // 启动 3 秒后再查，别拖慢首屏；StrictMode 的双次 effect 由 timer 清理 + busyRef 兜住。
+  // 受设置「启动时自动检查更新」控制（默认开启）：关掉后启动不联网，只能手动点「检查更新」。
+  // 读不到设置时按默认「开」处理，与后端 serde(default) 的口径一致。
   useEffect(() => {
     if (import.meta.env.DEV) return;
-    const timer = window.setTimeout(() => void checkForUpdate(true), CHECK_DELAY_MS);
-    return () => window.clearTimeout(timer);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      api
+        .getSettings()
+        .catch(() => null)
+        .then((s) => {
+          if (cancelled || s?.autoCheckUpdates === false) return;
+          return checkForUpdate(true);
+        });
+    }, CHECK_DELAY_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [checkForUpdate]);
 
   const installUpdate = useCallback(async () => {
