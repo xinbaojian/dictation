@@ -183,3 +183,22 @@ export interface SyncOutcome {
   /** 需要用户在确认框里决定是否强制覆盖 */
   needsConfirm: boolean;
 }
+
+/** 口算练习：一道三数两步逆推题（① op1 ② op2 ③ = ④，从左到右计算） */
+export interface MathQuestion {
+  a: number;
+  b: number;
+  c: number;
+  op1: "m" | "d" | "a" | "s";
+  op2: "m" | "d" | "a" | "s";
+  /** 第一步中间结果 a op1 b */
+  t: number;
+  /** 得数 */
+  d: number;
+}
+
+/** 一张口算卷：30 题与每题留空位置（1-4） */
+export interface MathSheet {
+  questions: MathQuestion[];
+  blanks: number[];
+}

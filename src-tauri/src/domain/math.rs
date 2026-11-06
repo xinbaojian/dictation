@@ -246,9 +246,8 @@ fn build(seed: u32, combos: &[(Op, Op)]) -> Option<Vec<MathQuestion>> {
     let mut rnd = Rng::new(seed);
     let mut qs: Vec<MathQuestion> = Vec::new();
     let mut seen: HashSet<(i32, i32, i32, Op, Op, i32)> = HashSet::new();
-    for i in 0..30 {
+    for (i, &cb) in plan.iter().enumerate() {
         let s = i / 10;
-        let cb = plan[i];
         let p = &stage_pools[&cb][s];
         let ap = &all_pools[&cb];
         let mut got: Option<MathQuestion> = None;
@@ -309,7 +308,7 @@ fn build_best(seed: u32, combos: &[(Op, Op)]) -> Option<Vec<MathQuestion>> {
     for k in 0..24u32 {
         if let Some(qs) = build(seed.wrapping_add(k), combos) {
             let sc = score(&qs);
-            if best.as_ref().map_or(true, |b| sc > b.0) {
+            if best.as_ref().is_none_or(|b| sc > b.0) {
                 best = Some((sc, qs));
             }
         }
@@ -481,8 +480,8 @@ mod tests {
             assert!((1..=4).contains(&b));
             counts[b as usize] += 1;
         }
-        for p in 1..=4 {
-            assert!((7..=8).contains(&counts[p]), "位置 {} 配额应为 7-8 题", p);
+        for (p, &n) in counts.iter().enumerate().skip(1) {
+            assert!((7..=8).contains(&n), "位置 {} 配额应为 7-8 题", p);
         }
     }
 
