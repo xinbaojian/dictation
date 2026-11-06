@@ -106,6 +106,10 @@ export const api = {
   appVersion: () => invoke<string>("app_version"),
   /** 重启后当前进程立刻退出，invoke 会抛错，调用方需忽略 */
   restartApp: () => invoke<void>("restart_app"),
+  /** 系统离线语音朗读（笔画复习页读词）；异步启动，再次调用会先停上一句 */
+  speakText: (text: string) => invoke<void>("speak_text", { text }),
+  /** 停止当前朗读（翻词 / 退出复习页时调用） */
+  stopSpeak: () => invoke<void>("stop_speak"),
 
   // 跨设备同步：默认完全离线，只有配置了自有 MySQL 才会有网络请求
   syncStatus: () => invoke<SyncStatus>("sync_status"),

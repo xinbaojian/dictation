@@ -34,7 +34,7 @@ related: [architecture.md, decisions.md]
 | 默写 | `pages/Quiz.tsx` | 进入即自动显示、到点遮罩、键盘快捷键、进度落库、`advancing` 锁 |
 | 批改 | `pages/Review.tsx` | 网格点错、`skip_marked` 预置、提交后 0.9s 跳转 |
 | 错题本 | `pages/Mistakes.tsx` | 分组筛选、连对进度条（读设置）、专项默写（**点击后先确认再开**，防误点）、打印、**手工加词并点字标错**（`AddMistakeModal`）、**进笔画复习（点词语直接从该词开始，路由带 `wordId`）** |
-| 笔画复习 | `pages/StrokeReview.tsx` | 逐词看笔顺动画（`components/StrokeWord.tsx` + `lib/strokes.ts`）、每字一个田字格、点格子只重播该字、「先自己写」遮住笔画后再对照、空格/←/R 快捷键、可从指定词开始（错题本点词语；找不到时从头开始） |
+| 笔画复习 | `pages/StrokeReview.tsx` | 逐词看笔顺动画（`components/StrokeWord.tsx` + `lib/strokes.ts`）、每字一个田字格、田字格上方逐字拼音（`lib/pinyin.ts`，多音字按词消歧，仅此页）、点格子只重播该字、「先自己写」遮住笔画后再对照、系统离线语音朗读（自动+手动，偏好记忆）、空格/←/R 快捷键、可从指定词开始（错题本点词语；找不到时从头开始） |
 | 记录 | `pages/History.tsx` | 50 条列表 + 详情弹窗 + 只练本次错词 + 单条删除 |
 | 设置 | `pages/Settings.tsx` | 遮罩/连对/字号、备份导出导入、打开数据目录（连字已挪到抽题页的抽词偏好） |
 | 词表 | `pages/Wordbook.tsx` | 分组树（可折叠、默认全部折叠、**可拖动调整层级与顺序**）、词数/错题/最近练习、行内编辑、粘贴导入、标记错题 |
@@ -62,6 +62,10 @@ related: [architecture.md, decisions.md]
 
 错题本的「复习笔画」页用 [hanzi-writer](https://github.com/chanind/hanzi-writer) 播放笔顺，数据来自
 `hanzi-writer-data`（Make Me a Hanzi，Arphic Public License）。**不连 CDN**——本应用默认纯离线，见 ADR-18。
+
+同一页的**拼音**与**朗读**也是离线的：拼音用 `pinyin-pro` 纯前端转换（`lib/pinyin.ts`，整词一次转换
+做多音字消歧、再与字符对齐，仅此页显示，见 ADR-19）；朗读走后端 `speech/` 的系统语音
+（`speak_text` / `stop_speak` 命令，macOS say / Windows SAPI / Linux spd-say）。
 
 - `scripts/sync-hanzi-data.mjs` 把 9574 个字打成 **256 个分片**写进 `public/hanzi/`（这是生成物，`.gitignore` 掉了），
   `package.json` 的 `predev` / `prebuild` 会自动跑；缺依赖会直接失败，不会打出「没有笔画」的包

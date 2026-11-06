@@ -1,11 +1,19 @@
 import HanziWriter from "hanzi-writer";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { charPinyins } from "../lib/pinyin";
 import { isHanzi, loadStrokeData } from "../lib/strokes";
 import GridLines from "./GridLines";
 
 export interface StrokeWordHandle {
   /** 从第一个字开始重播；传 index 就只重播这一个字 */
   play: (only?: number) => void;
+}
+
+/** 拼音字号随格子缩放：长词格子小，拼音也要跟着小，否则比字还抢眼 */
+function pinyinFontSize(boxSize: number): number {
+  if (boxSize >= 150) return 16;
+  if (boxSize >= 110) return 14;
+  return 12;
 }
 
 interface StrokeWordProps {
@@ -27,6 +35,8 @@ const StrokeWord = forwardRef<StrokeWordHandle, StrokeWordProps>(function Stroke
   ref,
 ) {
   const chars = useMemo(() => [...text], [text]);
+  // 整词转换（多音字按词消歧），再与字符一一对齐；非汉字占位空串
+  const pinyins = useMemo(() => charPinyins(text), [text]);
   const hosts = useRef<Array<HTMLDivElement | null>>([]);
   const writers = useRef<Array<HanziWriter | null>>([]);
   // 动画串行用的代际号：每次重播 / 换词都 +1，旧的循环看到号变了就收手
@@ -108,39 +118,47 @@ const StrokeWord = forwardRef<StrokeWordHandle, StrokeWordProps>(function Stroke
   useImperativeHandle(ref, () => ({ play }), [play]);
 
   return (
-    <div className="flex flex-wrap items-center justify-center gap-5">
+    <div className="flex flex-wrap items-end justify-center gap-x-5 gap-y-3">
       {chars.map((char, i) => (
-        <button
-          key={i}
-          type="button"
-          onClick={() => onPick(i)}
-          title={
-            missing.includes(i)
-              ? "「" + char + "」暂无笔画数据"
-              : masked
-                ? "点一下显示笔画"
-                : "点一下只看这个字"
-          }
-          className="ge shrink-0 cursor-pointer rounded-sm bg-white transition hover:border-amber-400"
-          style={{ width: size, height: size }}
-        >
-          <GridLines kind="tian" />
-          <div
-            ref={(el) => {
-              hosts.current[i] = el;
-            }}
-            className="absolute inset-0"
-          />
-          {/* 没有笔画数据的字退回静态字形；遮住模式下不画，否则等于给了答案 */}
-          {missing.includes(i) && !masked && (
-            <span
-              className="pointer-events-none absolute inset-0 flex items-center justify-center text-stone-800"
-              style={{ fontSize: size * 0.62, lineHeight: 1 }}
-            >
-              {char}
-            </span>
-          )}
-        </button>
+        <div key={i} className="flex shrink-0 flex-col items-center gap-1">
+          {/* 拼音行：田字格上方，像拼音田字格本；非汉字与无拼音占位保持对齐 */}
+          <span
+            className="select-none text-center text-stone-400"
+            style={{ width: size, fontSize: pinyinFontSize(size), lineHeight: 1.2 }}
+          >
+            {pinyins[i] ?? ""}
+          </span>
+          <button
+            type="button"
+            onClick={() => onPick(i)}
+            title={
+              missing.includes(i)
+                ? "「" + char + "」暂无笔画数据"
+                : masked
+                  ? "点一下显示笔画"
+                  : "点一下只看这个字"
+            }
+            className="ge shrink-0 cursor-pointer rounded-sm bg-white transition hover:border-amber-400"
+            style={{ width: size, height: size }}
+          >
+            <GridLines kind="tian" />
+            <div
+              ref={(el) => {
+                hosts.current[i] = el;
+              }}
+              className="absolute inset-0"
+            />
+            {/* 没有笔画数据的字退回静态字形；遮住模式下不画，否则等于给了答案 */}
+            {missing.includes(i) && !masked && (
+              <span
+                className="pointer-events-none absolute inset-0 flex items-center justify-center text-stone-800"
+                style={{ fontSize: size * 0.62, lineHeight: 1 }}
+              >
+                {char}
+              </span>
+            )}
+          </button>
+        </div>
       ))}
     </div>
   );

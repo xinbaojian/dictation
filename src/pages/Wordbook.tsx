@@ -2,10 +2,9 @@ import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react
 import ConfirmModal from "../components/ConfirmModal";
 import GroupModal from "../components/GroupModal";
 import PasteImportModal from "../components/PasteImportModal";
+import { Toast, useNotice } from "../components/Toast";
 import { api, errorMessage, practiceLabel } from "../lib/ipc";
 import type { Group, Word, WordStatus } from "../types";
-
-type Notice = { kind: "ok" | "error"; text: string };
 
 /** 拖动落点：落在行的上沿 = 排到前面，下沿 = 排到后面，中间 = 变成子分组 */
 type DropPos = "before" | "after" | "inside";
@@ -29,7 +28,7 @@ export default function Wordbook({ onPrint }: WordbookProps) {
   const [dropHint, setDropHint] = useState<{ id: number; pos: DropPos } | null>(null);
   const [rootHint, setRootHint] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [notice, setNotice] = useState<Notice | null>(null);
+  const { notice, notify } = useNotice();
 
   const [groupModal, setGroupModal] = useState<
     { mode: "create"; parent: Group | null } | { mode: "edit"; group: Group } | null
@@ -38,14 +37,6 @@ export default function Wordbook({ onPrint }: WordbookProps) {
   const [draft, setDraft] = useState("");
   const [edit, setEdit] = useState<{ id: number; text: string; note: string } | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; body: string; run: () => Promise<void> } | null>(null);
-
-  const notify = (kind: Notice["kind"], text: string) => setNotice({ kind, text });
-
-  useEffect(() => {
-    if (!notice) return;
-    const timer = setTimeout(() => setNotice(null), 4000);
-    return () => clearTimeout(timer);
-  }, [notice]);
 
   const refreshGroups = useCallback(async (preferId?: number | null) => {
     const list = await api.listGroups();
@@ -728,16 +719,7 @@ export default function Wordbook({ onPrint }: WordbookProps) {
         />
       )}
 
-      {notice && (
-        <div
-          className={
-            "fixed bottom-5 right-5 z-50 max-w-sm rounded-lg px-4 py-2.5 text-sm shadow-lg " +
-            (notice.kind === "error" ? "bg-rose-600 text-white" : "bg-stone-800 text-white")
-          }
-        >
-          {notice.text}
-        </div>
-      )}
+      <Toast notice={notice} />
     </div>
   );
 }

@@ -7,7 +7,7 @@ mod speech;
 
 use error::{AppError, AppResult};
 use rusqlite::Connection;
-use speech::{NullSpeaker, Speaker};
+use speech::{Speaker, SystemSpeaker};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::Manager;
@@ -15,8 +15,7 @@ use tauri::Manager;
 pub struct AppState {
     db: Mutex<Connection>,
     data_dir: PathBuf,
-    /// TTS 预留：V2 换实现即可，命令层与前端无需改动
-    #[allow(dead_code)]
+    /// TTS：系统自带离线语音（笔画复习页朗读词语用）
     speaker: Arc<dyn Speaker>,
 }
 
@@ -47,7 +46,7 @@ pub fn run() {
             app.manage(AppState {
                 db: Mutex::new(conn),
                 data_dir,
-                speaker: Arc::new(NullSpeaker),
+                speaker: Arc::new(SystemSpeaker::new()),
             });
             Ok(())
         })
@@ -88,6 +87,8 @@ pub fn run() {
             commands::system::data_dir_path,
             commands::system::app_version,
             commands::system::restart_app,
+            commands::system::speak_text,
+            commands::system::stop_speak,
             commands::sync::sync_status,
             commands::sync::save_sync_config,
             commands::sync::test_sync_connection,

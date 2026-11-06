@@ -1,6 +1,6 @@
 ---
 title: 设计决策（ADR）
-updated: 2026-11-05
+updated: 2026-11-07
 tags: [adr, decisions]
 related: [overview.md, quiz-flow.md]
 ---
@@ -14,12 +14,14 @@ related: [overview.md, quiz-flow.md]
 - **结论**：`words` 无 `pinyin` 列，粘贴解析不处理拼音，界面不显示
 - **理由**：家长朗读，孩子默写；拼音既帮不上忙，还占录入成本与表结构
 - **影响**：打印单只有田字格，没有拼音行
+- **修订（2026-11-07，ADR-19）**：「界面不显示」收窄为「除笔画复习页外不显示」；数据模型与导入解析的排除**不变**
 
 ## ADR-2 TTS 只预留不实现
 
 - **结论**：`trait Speaker` + `NullSpeaker` 注入 `AppState`，V1 无调用点
 - **理由**：将来可能用系统语音读词（届时连遮罩都能去掉），但现在不引入语音依赖与平台差异
 - **影响**：V2 只需加实现 + 一条命令 + 前端按钮，不动表结构
+- **修订（2026-11-07，ADR-19）**：已按此路径实现系统离线 TTS，命令层与表结构确实没动
 
 ## ADR-3 错题本不建表
 
@@ -130,3 +132,12 @@ related: [overview.md, quiz-flow.md]
 - **为什么不用 `document.baseURI` 拼路径**：它带上了当前页面的目录，入口一换就 404；而 dev server 对未知路径返回 index.html + 200，表现成「JSON 解析失败」。改为相对站点根（`import.meta.env.BASE_URL`），见 [pitfalls.md](./pitfalls.md) 第 24 条
 - **降级**：取不到数据的字退回静态字形，页面不会空白；非汉字（字母、数字、标点）本来就没有笔顺，直接画字
 - **不做**：不做「跟着描红判分」（`writer.quiz()`）——这是桌面应用，家长和孩子用鼠标/触控板描红的体验很差，练写交给纸和田字格
+
+## ADR-19 笔画复习页显示拼音 + 系统离线 TTS 朗读
+
+- **结论**：笔画复习页在田字格上方逐字显示拼音（带调），并用系统离线语音朗读词语；翻词自动读（可关，记住偏好）+「读一遍」手动按钮。其余页面、打印单、数据模型维持无拼音
+- **理由**：该页是孩子对照学习的场景（尤其「先自己写」遮住笔画时，页面本来就不显示词语文字，读音成了唯一线索），拼音有正音价值；这与 ADR-1 排除拼音的「默写场景」不冲突
+- **拼音来源**：`pinyin-pro` 纯前端离线转换（内置词典，多音字按词消歧，实测「长大」→ zhǎng dà），整词一次转换后与字符对齐；拼音永不进数据库、导入仍不解析
+- **TTS 走系统自带语音**（不引联网引擎，维持默认纯离线）：macOS `say` 子进程（探测 zh 语音，`-v` 指定）、Windows SAPI `ISpVoice`（`EnumTokens("Language=804")` 选中文，`SPF_ASYNC` + `SPF_PURGEBEFORESPEAK`）、Linux `spd-say`。系统没装中文语音时报可操作的中文提示
+- **代价**：前端产物增大约 0.3MB（pinyin-pro 词典压缩后进 bundle，实测 609KB/gzip 236KB，本地加载无感）；SAPI 代码无法在 macOS 开发机上运行验证，靠 `cargo check --target x86_64-pc-windows-msvc`（最小检查工程，绕开 tauri 依赖树 ring 的交叉 C 编译问题）+ CI Windows 构建 + 审查兜底
+- **接口形状**（沿用 ADR-2 的预留）：`speech/` 里 `Speaker` trait + `SystemSpeaker` 按平台分发；命令 `speak_text` / `stop_speak`（async + `spawn_blocking`）；speak 是「先停上一句再读」的幂等语义，StrictMode 双跑无害

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import StrokeWord, { type StrokeWordHandle } from "../components/StrokeWord";
+import { Toast, useNotice } from "../components/Toast";
 import { api, errorMessage } from "../lib/ipc";
 import type { Mistake } from "../types";
 
@@ -28,6 +29,17 @@ function boxSize(count: number): number {
   return Math.max(96, Math.min(132, fit));
 }
 
+/** 「自动朗读」偏好存 localStorage：默认开，关掉的孩子可能正在专心写字 */
+const AUTO_SPEAK_KEY = "strokeReview.autoSpeak";
+
+function readAutoSpeak(): boolean {
+  try {
+    return localStorage.getItem(AUTO_SPEAK_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
 /** 错题本的「笔画复习」：逐词展示笔顺动画，可先遮住让孩子自己写再对照 */
 export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeReviewProps) {
   const [words, setWords] = useState<Mistake[]>([]);
@@ -36,9 +48,12 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
   const [revealed, setRevealed] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // 翻到每个词自动用系统语音读一遍（「先自己写」遮笔画不遮读音，孩子照读音写）
+  const [autoSpeak, setAutoSpeak] = useState(readAutoSpeak);
   const wordRef = useRef<StrokeWordHandle>(null);
   // 挡住连点：一次翻两词会让孩子莫名其妙漏掉一个
   const navAt = useRef(0);
+  const { notice, notify } = useNotice();
 
   useEffect(() => {
     (async () => {
@@ -60,6 +75,33 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
   const word = words[index];
   const masked = hideMode && !revealed;
   const charCount = word ? [...word.text].length : 0;
+
+  const speak = useCallback(async () => {
+    if (!word) return;
+    try {
+      await api.speakText(word.text);
+    } catch (e) {
+      // 朗读失败不该打断复习，但也不能无声无息让家长误以为孩子听过音了
+      notify("error", "朗读失败：" + errorMessage(e));
+    }
+  }, [word, notify]);
+
+  // 换词 / 开关切换时朗读或停上一句。StrictMode 双跑无害：后端 speak 先停旧句再读，等于只读一次
+  useEffect(() => {
+    if (!word) return;
+    if (autoSpeak) void speak();
+    else void api.stopSpeak().catch(() => {});
+  }, [word, autoSpeak, speak]);
+
+  // 偏好落盘；退出复习页停掉可能在播的朗读
+  useEffect(() => {
+    try {
+      localStorage.setItem(AUTO_SPEAK_KEY, autoSpeak ? "1" : "0");
+    } catch {
+      // localStorage 不可用就只当本次会话的偏好
+    }
+  }, [autoSpeak]);
+  useEffect(() => () => void api.stopSpeak().catch(() => {}), []);
   // 词表是按行/逗号切分的，一句话没有标点也会变成一个很长的「词」；
   // boxSize 会随字数缩格子，再长的靠下面的滚动兜底
   const size = boxSize(charCount);
@@ -170,6 +212,18 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setAutoSpeak((v) => !v)}
+            title="翻到每个词时用系统语音自动读一遍（需系统装有中文语音）"
+            className={
+              "rounded-md border px-3 py-1.5 text-sm transition " +
+              (autoSpeak
+                ? "border-amber-300 bg-amber-50 font-medium text-amber-700"
+                : "border-stone-200 text-stone-600 hover:bg-stone-50")
+            }
+          >
+            自动朗读{autoSpeak ? " ✓" : ""}
+          </button>
+          <button
             onClick={toggleHide}
             title="每个词先遮住笔画，孩子在纸上写完再点「显示笔画」对照"
             className={
@@ -243,6 +297,13 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
         >
           重播笔画
         </button>
+        <button
+          onClick={() => void speak()}
+          title="用系统语音再读一遍这个词"
+          className="rounded-md border border-stone-300 bg-white px-5 py-2 text-sm text-stone-700 hover:bg-stone-50"
+        >
+          🔊 读一遍
+        </button>
         {masked && (
           <button
             onClick={() => setRevealed(true)}
@@ -258,6 +319,8 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
           {last ? "完成" : "下一个"}
         </button>
       </footer>
+
+      <Toast notice={notice} />
     </div>
   );
 }

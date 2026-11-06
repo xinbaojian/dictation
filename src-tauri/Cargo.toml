@@ -31,6 +31,10 @@ tauri-plugin-single-instance = "2"
 mysql = "28.0.4"
 sha2 = "0.10"
 
+# 朗读（SAPI ISpVoice）只在 Windows 上编译
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_System_Com", "Win32_Media_Speech"] }
+
 [profile.release]
 codegen-units = 1
 lto = true

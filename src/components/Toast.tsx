@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 export type Notice = { kind: "ok" | "error"; text: string };
 
@@ -11,11 +11,15 @@ export function useNotice() {
     return () => clearTimeout(timer);
   }, [notice]);
 
-  return {
-    notice,
-    notify: (kind: Notice["kind"], text: string) => setNotice({ kind, text }),
-    clear: () => setNotice(null),
-  };
+  // notify 必须是稳定引用：调用方常把它放进 useCallback/effect 依赖，
+  // 内联函数会让「notify → setNotice → 渲染 → 新 notify」形成重跑循环
+  // （曾让朗读失败提示无限弹 toast，见 2026-11-07 审查 P1-1）
+  const notify = useCallback((kind: Notice["kind"], text: string) => {
+    setNotice({ kind, text });
+  }, []);
+  const clear = useCallback(() => setNotice(null), []);
+
+  return { notice, notify, clear };
 }
 
 export function Toast({ notice }: { notice: Notice | null }) {

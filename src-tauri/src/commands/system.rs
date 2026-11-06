@@ -69,3 +69,22 @@ pub fn app_version() -> String {
 pub fn restart_app(app: tauri::AppHandle) {
     app.restart();
 }
+
+/// 用系统离线语音朗读一段文本（笔画复习页读词语）。异步：启动朗读后立即返回。
+/// 子进程 / COM 都不能在 async 线程上直接做，照同步命令的规矩挪去阻塞线程池。
+#[tauri::command]
+pub async fn speak_text(state: State<'_, AppState>, text: String) -> AppResult<()> {
+    let speaker = state.speaker.clone();
+    tauri::async_runtime::spawn_blocking(move || speaker.speak(&text))
+        .await
+        .map_err(|_| AppError::msg("朗读没有完成"))?
+}
+
+/// 停止当前朗读（翻词 / 退出复习页时调用）
+#[tauri::command]
+pub async fn stop_speak(state: State<'_, AppState>) -> AppResult<()> {
+    let speaker = state.speaker.clone();
+    tauri::async_runtime::spawn_blocking(move || speaker.stop())
+        .await
+        .map_err(|_| AppError::msg("停止朗读失败"))
+}
