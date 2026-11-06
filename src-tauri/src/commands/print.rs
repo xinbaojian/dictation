@@ -27,32 +27,22 @@ fn write_temp_html(name: &str, html: &str) -> AppResult<PathBuf> {
     Ok(path)
 }
 
-/// 用系统默认浏览器打开 path（macOS / Linux / Windows 各自的打开命令）。
-/// 失败只报错不 panic：浏览器打不开时用户仍可手动找到文件。
+/// 用系统默认程序打开 path（html 会由默认浏览器接管）。
+/// 与 system.rs::open_data_dir 同款：explorer / open / xdg-open + spawn，
+/// 全程不经 shell（cmd 的 start 会对元字符重解析，有注入面）。
 fn open_in_browser(path: &std::path::Path) -> AppResult<()> {
-    let status = {
-        #[cfg(target_os = "macos")]
-        {
-            std::process::Command::new("open").arg(path).status()
-        }
-        #[cfg(target_os = "windows")]
-        {
-            // start 对正斜杠路径会当参数解析，先转成反斜杠；空标题占位防止路径带空格被当成标题
-            let p = path.to_string_lossy().replace('/', "\\");
-            std::process::Command::new("cmd")
-                .args(["/C", "start", "", &p])
-                .status()
-        }
-        #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            std::process::Command::new("xdg-open").arg(path).status()
-        }
+    let opener = if cfg!(target_os = "windows") {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
     };
-    match status {
-        Ok(s) if s.success() => Ok(()),
-        Ok(s) => Err(AppError::msg(format!("打开浏览器失败（退出码 {s}）"))),
-        Err(e) => Err(AppError::msg(format!("打开浏览器失败：{e}"))),
-    }
+    std::process::Command::new(opener)
+        .arg(path)
+        .spawn()
+        .map_err(|e| AppError::msg(format!("打开浏览器失败：{e}")))?;
+    Ok(())
 }
 
 /// 打印入口（macOS / Linux WebView 不支持 window.print() 时的兜底）：

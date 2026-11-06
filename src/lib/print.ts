@@ -23,23 +23,31 @@ function collectCss(): string {
   return parts.join("\n");
 }
 
+/** HTML 转义：name 含用户可控的分组标题，拼进 <title> 前必须转义（防提前闭合注入） */
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c,
+  );
+}
+
 /** 打印页面上某个元素（selector 选中它的 outerHTML）。
  *  name 不带扩展名，用于临时文件名（口算卷用题号，默写单用标题）。
  *  返回提示文案；失败抛错由调用方 toast。 */
 export async function printElement(selector: string, name: string): Promise<string> {
-  if (isWebViewPrintSupported()) {
-    window.print();
-    return "";
-  }
+  // 校验先于平台分流：Windows 上元素缺失同样报错，而不是把空态卡片整页打出去
   const el = document.querySelector(selector);
   if (!el) {
     throw new Error("找不到要打印的内容");
+  }
+  if (isWebViewPrintSupported()) {
+    window.print();
+    return "";
   }
   const html = `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>${name}</title>
+<title>${escapeHtml(name)}</title>
 <style>${collectCss()}</style>
 <style>html,body{margin:0;background:#fff}</style>
 </head>
