@@ -51,6 +51,8 @@ export default function PrintSheet({ mode, groupId, title, onBack }: PrintSheetP
 
   return (
     <div className="print-root min-h-0 flex-1 overflow-y-auto bg-stone-200/60 pb-10">
+      {/* 本页打印边距自声明：@page 无法按 class 作用域隔离，由各打印页自己渲染（口算卷是 margin:0 满幅） */}
+      <style>{"@page { size: A4; margin: 12mm }"}</style>
       <div className="no-print mx-auto flex w-[210mm] max-w-full items-center justify-between gap-3 px-1 py-4">
         <div className="flex items-center gap-2">
           <button

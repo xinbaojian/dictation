@@ -44,10 +44,8 @@ body {
     );
 }
 
-@page {
-  size: A4;
-  margin: 12mm;
-}
+/* 打印页的 @page（纸张大小与边距）不再全局声明：
+   默写单 12mm、口算卷满幅 0，由各打印页自己渲染 <style> 声明，互不干扰 */
 
 @media print {
   html,
