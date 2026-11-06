@@ -84,6 +84,8 @@ export default function MathSheetPage() {
   const [seed, setSeed] = useState(newSeed);
   const [sheet, setSheet] = useState<MathSheet | null>(null);
   const [loading, setLoading] = useState(true);
+  /** 区间输入的本地草稿：清空/负号等中间态先落在这里，合法才写回 options，失焦丢弃 */
+  const [drafts, setDrafts] = useState<Partial<Record<keyof MathRanges, string>>>({});
   const { notice, notify } = useNotice();
 
   // 第一步为 ÷/− 时中间结果很小，减不动 ≥10 的第三数：第二步强制用加（与原 normalize 一致）
@@ -103,35 +105,49 @@ export default function MathSheetPage() {
   }, [options]);
 
   useEffect(() => {
+    // 区间逐键输入会连发 IPC，120ms 防抖合并（与抽题页可抽数量一致）
     let alive = true;
-    setLoading(true);
-    (async () => {
-      try {
-        const s = await api.generateMathSheet(seed, eff.pos, eff.op1, eff.op2, options.ranges);
-        if (alive) setSheet(s);
-      } catch (e) {
-        if (alive) {
-          setSheet(null);
-          notify("error", errorMessage(e));
+    const timer = setTimeout(() => {
+      setLoading(true);
+      (async () => {
+        try {
+          const s = await api.generateMathSheet(seed, eff.pos, eff.op1, eff.op2, options.ranges);
+          if (alive) setSheet(s);
+        } catch (e) {
+          if (alive) {
+            setSheet(null);
+            notify("error", errorMessage(e));
+          }
+        } finally {
+          if (alive) setLoading(false);
         }
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
+      })();
+    }, 120);
     return () => {
       alive = false;
+      clearTimeout(timer);
     };
     // eff 由下方三个原始值派生，只依赖原始值即可
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seed, options.pos, options.op1, options.op2, options.ranges]);
 
-  /** 区间输入：空串 / 非整数不更新（输入中途状态），非法组合交给后端校验并提示 */
+  /** 区间输入：中间态进 draft，空串/非整数不写回（后端 validate 兜底报中文错误） */
   const setRange = (key: keyof MathRanges, raw: string) => {
+    setDrafts((d) => ({ ...d, [key]: raw }));
     if (raw.trim() === "") return;
     const v = Number(raw);
     if (!Number.isInteger(v)) return;
     setOptions((o) => ({ ...o, ranges: { ...o.ranges, [key]: v } }));
   };
+  /** 失焦落定：丢弃草稿，显示回 state 里的合法值 */
+  const commitRange = (key: keyof MathRanges) => {
+    setDrafts((d) => {
+      const next = { ...d };
+      delete next[key];
+      return next;
+    });
+  };
+  const rangeValue = (key: keyof MathRanges) => drafts[key] ?? String(options.ranges[key]);
 
   const first = sheet?.questions[0];
   const example = first
@@ -198,15 +214,17 @@ export default function MathSheetPage() {
               <input
                 className="ms-range-input"
                 type="number"
-                value={options.ranges[row.min]}
+                value={rangeValue(row.min)}
                 onChange={(e) => setRange(row.min, e.target.value)}
+                onBlur={() => commitRange(row.min)}
               />
               <span className="text-stone-400">~</span>
               <input
                 className="ms-range-input"
                 type="number"
-                value={options.ranges[row.max]}
+                value={rangeValue(row.max)}
                 onChange={(e) => setRange(row.max, e.target.value)}
+                onBlur={() => commitRange(row.max)}
               />
             </div>
           ))}
@@ -221,8 +239,8 @@ export default function MathSheetPage() {
           <p className="ms-note">
             {customRange ? (
               <>
-                自定义区间：整卷同一区间出题，<em>不再分三段难度</em>。①② 上限 20、③ 上限 100、④
-                上限 200。
+                自定义区间：整卷同一区间出题，<em>不再分三段难度</em>；两端相同（固定单值）时可能出不出
+                30 题。①② 上限 20、③ 上限 100、④ 上限 200。
               </>
             ) : (
               <>默认区间分三段难度递进（易 → 难）。①② 上限 20、③ 上限 100、④ 上限 200。</>
