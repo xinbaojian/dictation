@@ -99,7 +99,10 @@ endif
 # 公钥写在 tauri.conf.json；私钥只放本机 ~/.tauri/dictation.key，CI 由 Secret 注入。
 # 本机有密钥就自动带上，否则打出的安装包没有 .sig，旧版本会无法升级。
 # 手动指定：make build SIGN_KEY=/path/to/dictation.key
-SIGN_KEY ?= $(HOME)/.tauri/dictation.key
+# Windows 的 PowerShell / cmd 不设 HOME 环境变量（只有 Git Bash 才有），
+# 故优先用 USERPROFILE；并把反斜杠换成正斜杠，避免 C:\Users/... 混合分隔符。
+SIGN_HOME := $(if $(USERPROFILE),$(USERPROFILE),$(HOME))
+SIGN_KEY  ?= $(subst \,/,$(SIGN_HOME))/.tauri/dictation.key
 ifneq ($(strip $(TAURI_SIGNING_PRIVATE_KEY)),)
   SIGN_PREFIX :=
 else ifneq ($(wildcard $(SIGN_KEY)),)
