@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-家长给二年级孩子做生词默写的**单机离线**桌面应用：家长读词、孩子手写、家长批改；程序负责抽题、防偷看、记录错题。
+给二年级孩子的**学习小工具集合**（单机离线桌面应用）：一级顶栏切换工具，当前含「生词默写」（家长读词、孩子手写、家长批改；程序负责抽题、防偷看、记录错题）与「口算练习」（三数两步逆推口算卷，出题打印）两个工具。
 
 - Rust + Tauri 2 + SQLite（rusqlite，bundled）
 - React 18 + TypeScript + Vite + Tailwind CSS 4
@@ -49,7 +49,8 @@ src-tauri/src/domain/   text.rs 粘贴切分、sampler.rs 抽题（纯函数，�
 src-tauri/src/repo/     groups / words / sessions / word_progress / settings / backup / sync
 src-tauri/src/commands/ library.rs（11）/ quiz.rs（14）/ system.rs（9）/ sync.rs（7）（薄封装，共 41 个命令）
 src-tauri/src/speech/   TTS 抽象 trait Speaker（V1 只有 NullSpeaker）
-src/pages/              Pick / Quiz / Review / Mistakes / History / Settings / Wordbook / PrintSheet
+src/pages/              Pick / Quiz / Review / Mistakes / History / Settings / Wordbook / PrintSheet；math/（口算：MathSheet + example + math-sheet.css）
+src/tools/registry.ts   工具注册表：顶栏一级菜单（TOOLS）与各工具二级菜单（NAV_BY_TOOL）、Route 联合类型
 src/lib/ipc.ts          全部自定义后端命令集中于此，类型来自 src/types.ts
 src/lib/updater.ts      自动升级状态机（插件 API：check / downloadAndInstall）
 scripts/gen-updater-manifest.mjs  CI 里把各平台 .sig 汇总成 Release 的 latest.json

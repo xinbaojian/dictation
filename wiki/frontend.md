@@ -1,6 +1,6 @@
 ---
 title: 前端结构
-updated: 2026-11-05
+updated: 2026-11-06
 tags: [frontend, react]
 related: [architecture.md, decisions.md]
 ---
@@ -11,13 +11,15 @@ related: [architecture.md, decisions.md]
 
 ## 路由
 
-没有 react-router。`App.tsx` 里一个联合类型 `Route` 驱动整屏切换：
+没有 react-router。`App.tsx` 里一个联合类型 `Route` 驱动整屏切换；工具集合壳层：**顶栏一级菜单切换工具（`src/tools/registry.ts` 的 `TOOLS`），左侧侧栏是当前工具的二级菜单（`NAV_BY_TOOL`），设置是全局页挂在顶栏**。加第 3 个工具 = Route 加变体 + 注册表加一项 + App.tsx 挂页面。
 
 ```ts
-{ name: "pick" | "wordbook" | "mistakes" | "history" | "settings" }
-| { name: "quiz"; sessionId: number }
-| { name: "review"; sessionId: number }
-| { name: "print"; mode: "mistakes" | "group"; groupId: number | null; title: string }
+// name 是唯一判别字段（工具 id 或 "settings"）
+{ name: "dictation"; page: "pick" | "wordbook" | "mistakes" | "history" }
+| { name: "dictation"; page: "quiz" | "review"; sessionId: number }
+| { name: "dictation"; page: "print"; mode: "mistakes" | "group"; groupId: number | null; title: string }
+| { name: "math"; page: "sheet" }
+| { name: "settings" }
 ```
 
 - 默写中 / 批改中，侧栏高亮仍停在「默写」
@@ -35,6 +37,11 @@ related: [architecture.md, decisions.md]
 | 设置 | `pages/Settings.tsx` | 遮罩/连对/字号、备份导出导入、打开数据目录（连字已挪到抽题页的抽词偏好） |
 | 词表 | `pages/Wordbook.tsx` | 分组树（可折叠、默认全部折叠、**可拖动调整层级与顺序**）、词数/错题/最近练习、行内编辑、粘贴导入、标记错题 |
 | 打印 | `pages/PrintSheet.tsx` | A4 排版 + 田字格，`window.print()` |
+| 口算练习 | `pages/math/MathSheet.tsx` | 选项工具条（留空位置 / 两步运算符 / 答案显隐）、A4 满幅卷面（3×10 格 + 可裁剪答案条 + 口诀示范条 `example.ts`）、选项存 localStorage、出题走 `generate_math_sheet` 命令 |
+
+## 打印
+
+`@page` 不再全局声明：各打印页自己渲染 `<style>` 声明（默写单 `margin: 12mm`，口算卷满幅 `margin: 0`；`@page` 无法按 class 作用域隔离，同一时刻只挂一个打印页所以不冲突）。工具条 / 横幅 / 侧栏挂 `.no-print`，正文容器挂 `.print-root`。
 
 ## 通用组件
 

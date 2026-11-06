@@ -16,7 +16,7 @@ React 页面 ──invoke──> commands/*.rs ──> repo/*.rs ──> rusqlit
                             └──> domain/*.rs（纯逻辑：切分、抽题、状态机）
 ```
 
-- `domain/`：无 I/O、不依赖 Tauri，输入输出都是普通结构，全部可单测
+- `domain/`：无 I/O、不依赖 Tauri，输入输出都是普通结构，全部可单测（`math.rs` 口算出题引擎：三数两步逆推，同 seed 同卷）
 - `repo/`：唯一写 SQL 的地方，函数签名接收 `&Connection`
 - `commands/`：只做「拿锁 → 调 repo → 返回 DTO」，不含业务规则
 - 前端：`src/lib/ipc.ts` 是唯一出口，命令名与 Rust 一一对应
