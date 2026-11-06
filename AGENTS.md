@@ -95,7 +95,7 @@ scripts/gen-updater-manifest.mjs  CI 里把各平台 .sig 汇总成 Release 的 
 - **不要用 bash 里的 `sqlite3` 命令行写中文数据**：Windows 控制台是 GBK，直接写会存进非法 UTF-8，读出来报 `invalid utf-8 sequence`。要写就用 UTF-8 的 `.sql` 文件 `sqlite3 db < file.sql`。
 - `sqlite3` CLI 默认 `foreign_keys=OFF`，删分组不会级联删词；应用内是 ON 的。
 - 开发时 `cargo test` 和 `tauri dev` 会争 target 锁，串行跑。
-- `window.print()` 在 WebView2 可用；打印样式靠 `index.css` 里的 ```media print` + `.no-print`。
+- **打印要过 `src/lib/print.ts`，别直接调 `window.print()`**：WebView2（Windows）实现了它，但 macOS WKWebView / Linux WebKitGTK 里是**静默无操作**（Tauri issue #3066）。工具函数按平台分流：Windows 原生打印；其余平台把「打印元素 + 全量 CSS」拼成独立 HTML 经 `print_html` 命令写临时文件、用默认浏览器打开并自动调起打印。打印样式靠 `index.css` 里的 `@media print` + `.no-print`。
 - 会话推进有 `advancing` ref 同步锁，别换成普通 state，会连点跳词。
 - **WebView2 的 HTML5 拖放要先关 Tauri 的文件拖放**：`tauri.conf.json` 窗口配置里 `dragDropEnabled: false`，否则 `dragstart / dragover / drop` 一个都不触发，还不报错。
 - **Windows 便携版升级后会「丢数据」**：updater 装的是 NSIS 版，数据目录从 exe 同级回落到 `%APPDATA%`；升级前先导出备份（wiki/pitfalls.md 第 21 条）。

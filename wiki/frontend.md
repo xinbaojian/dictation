@@ -43,6 +43,8 @@ related: [architecture.md, decisions.md]
 
 `@page` 不再全局声明：各打印页自己渲染 `<style>` 声明（默写单 `margin: 12mm`，口算卷满幅 `margin: 0`；`@page` 无法按 class 作用域隔离，同一时刻只挂一个打印页所以不冲突）。工具条 / 横幅 / 侧栏挂 `.no-print`，正文容器挂 `.print-root`。
 
+打印动作统一走 `src/lib/print.ts` 的 `printElement/printWithToast`，不要直接调 `window.print()`：Windows WebView2 支持原生打印；**macOS WKWebView / Linux WebKitGTK 的 `window.print()` 是静默无操作**（Tauri issue #3066），兜底路径是把「打印元素 outerHTML + 收集到的全量 CSS（含 @page 与 @media print）」拼成独立 HTML，经 `print_html` 命令（`commands/print.rs`）写进临时目录 `dictation-print/`，用系统默认浏览器打开，页面加载后自动调起浏览器的打印对话框（打印 / 存为 PDF 都可用）。打印元素靠 class 携带样式，所以克隆 DOM + 全量 CSS 即可复刻排版。
+
 ## 通用组件
 
 | 组件 | 用途 |

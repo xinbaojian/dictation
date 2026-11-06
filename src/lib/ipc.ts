@@ -86,6 +86,11 @@ export const api = {
       ranges: ranges ?? null,
     }),
 
+  // 打印
+  /** macOS/Linux WebView 不支持 window.print()：写临时 HTML 并用默认浏览器打开 */
+  printHtml: (name: string, html: string) =>
+    invoke<string>("print_html", { name, html }),
+
   // 设置与备份
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (value: Settings) => invoke<Settings>("save_settings", { value }),

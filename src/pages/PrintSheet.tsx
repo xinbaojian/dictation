@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Toast, useNotice } from "../components/Toast";
 import { api, errorMessage } from "../lib/ipc";
+import { printWithToast } from "../lib/print";
 
 interface PrintSheetProps {
   mode: "mistakes" | "group";
@@ -74,7 +75,7 @@ export default function PrintSheet({ mode, groupId, title, onBack }: PrintSheetP
             {showWord ? "抄写单（含词语）" : "默写单（不含词语）"}
           </button>
           <button
-            onClick={() => window.print()}
+            onClick={() => printWithToast(".print-page", `默写单-${title}`, notify)}
             className="rounded-md bg-amber-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-amber-700"
           >
             打印

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Toast, useNotice } from "../../components/Toast";
 import { api, errorMessage } from "../../lib/ipc";
+import { printWithToast } from "../../lib/print";
 import { DEFAULT_MATH_RANGES, type MathRanges, type MathSheet } from "../../types";
 import { buildExample, type MathOp } from "./example";
 import "./math-sheet.css";
@@ -264,7 +265,11 @@ export default function MathSheetPage() {
           >
             重新生成算式
           </button>
-          <button className="ms-btn w-full" type="button" onClick={() => window.print()}>
+          <button
+            className="ms-btn w-full"
+            type="button"
+            onClick={() => printWithToast(".ms-sheet", `口算练习-题号${seed}`, notify)}
+          >
             打印 / 存为 PDF
           </button>
         </div>
