@@ -23,25 +23,20 @@ body {
   scrollbar-width: thin;
 }
 
-/* 田字格：虚线外框 + 十字辅助线 */
-.tian {
-  position: relative;
-  display: inline-block;
-  border: 1px dashed #c9c5be;
-  background-image: linear-gradient(
-      to right,
-      transparent calc(50% - 0.5px),
-      #e7e5e4 calc(50% - 0.5px),
-      #e7e5e4 calc(50% + 0.5px),
-      transparent calc(50% + 0.5px)
-    ),
-    linear-gradient(
-      to bottom,
-      transparent calc(50% - 0.5px),
-      #e7e5e4 calc(50% - 0.5px),
-      #e7e5e4 calc(50% + 0.5px),
-      transparent calc(50% + 0.5px)
-    );
+/* 方格（田 / 米 / 方）的外框。辅助线不在这里画——背景图默认不打印，
+   十字与对角线由 components/GridLines.tsx 用 SVG 描边渲染。
+
+   放进 components 层：不分层的规则会盖过 Tailwind 的 @layer utilities，
+   元素上的 hover:border-* / border-* 就永远改不动这个边框。 */
+@layer components {
+  .ge {
+    position: relative;
+    display: inline-block;
+    box-sizing: border-box;
+    /* 别让 flex 容器把格子压扁：排不下时应该折行，而不是变成扁矩形 */
+    flex: none;
+    border: 1px dashed #c9c5be;
+  }
 }
 
 /* 打印页的 @page（纸张大小与边距）不再全局声明：

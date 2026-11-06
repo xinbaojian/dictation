@@ -17,12 +17,13 @@ related: [architecture.md, decisions.md]
 // name 是唯一判别字段（工具 id 或 "settings"）
 { name: "dictation"; page: "pick" | "wordbook" | "mistakes" | "history" }
 | { name: "dictation"; page: "quiz" | "review"; sessionId: number }
+| { name: "dictation"; page: "stroke"; groupId: number | null; title: string }
 | { name: "dictation"; page: "print"; mode: "mistakes" | "group"; groupId: number | null; title: string }
 | { name: "math"; page: "sheet" }
 | { name: "settings" }
 ```
 
-- 默写中 / 批改中，侧栏高亮仍停在「默写」
+- 默写中 / 批改中，侧栏高亮仍停在「默写」；笔画复习（`stroke`）挂在「错题」下
 - Quiz / Review 用 `key={sessionId}` 强制重建，避免上一场的状态残留
 
 ## 页面职责
@@ -32,11 +33,12 @@ related: [architecture.md, decisions.md]
 | 抽题配置 | `pages/Pick.tsx` | 分组多选（默认全不选，未选时不可开始）、范围、题量（5 / 10 / 15 / 20 / 25 / 30 / 全部）、抽词偏好多选（反复错字 / 错过字 / 新词 / 上次写过的排后 / 同批不重字 / 连字，默认除连字外全选，全不选 = 纯随机）、可抽数量（120ms 防抖）；顶部「继续上次」横幅 |
 | 默写 | `pages/Quiz.tsx` | 进入即自动显示、到点遮罩、键盘快捷键、进度落库、`advancing` 锁 |
 | 批改 | `pages/Review.tsx` | 网格点错、`skip_marked` 预置、提交后 0.9s 跳转 |
-| 错题本 | `pages/Mistakes.tsx` | 分组筛选、连对进度条（读设置）、专项默写、打印、**手工加词并点字标错**（`AddMistakeModal`） |
+| 错题本 | `pages/Mistakes.tsx` | 分组筛选、连对进度条（读设置）、专项默写（**点击后先确认再开**，防误点）、打印、**手工加词并点字标错**（`AddMistakeModal`）、**进笔画复习** |
+| 笔画复习 | `pages/StrokeReview.tsx` | 逐词看笔顺动画（`components/StrokeWord.tsx` + `lib/strokes.ts`）、每字一个田字格、点格子只重播该字、「先自己写」遮住笔画后再对照、空格/←/R 快捷键 |
 | 记录 | `pages/History.tsx` | 50 条列表 + 详情弹窗 + 只练本次错词 + 单条删除 |
 | 设置 | `pages/Settings.tsx` | 遮罩/连对/字号、备份导出导入、打开数据目录（连字已挪到抽题页的抽词偏好） |
 | 词表 | `pages/Wordbook.tsx` | 分组树（可折叠、默认全部折叠、**可拖动调整层级与顺序**）、词数/错题/最近练习、行内编辑、粘贴导入、标记错题 |
-| 打印 | `pages/PrintSheet.tsx` | A4 排版 + 田字格，`window.print()` |
+| 打印 / 字帖 | `pages/PrintSheet.tsx` | A4 字帖：每行一个词横向排满（示范字 → 描红 → 空格），可选方格（田 / 米 / 方）、大小（10 / 12 / 14mm）、描红遍数（0 / 1 / 2）、抄写单 ↔ 默写单；选项存 localStorage（`printSheet.options`） |
 | 口算练习 | `pages/math/MathSheet.tsx` | 左侧条件面板（留空位置 / 两步运算符 / 四位置取值区间 / 答案显隐，选项存 localStorage）、A4 满幅卷面（3×10 格 + 可裁剪答案条 + 口诀示范条 `example.ts`）、出题走 `generate_math_sheet` 命令（区间默认 = 三段难度，自定义 = 单池平铺，见 `domain/math.rs`） |
 
 ## 打印
@@ -44,6 +46,34 @@ related: [architecture.md, decisions.md]
 `@page` 不再全局声明：各打印页自己渲染 `<style>` 声明（默写单 `margin: 12mm`，口算卷满幅 `margin: 0`；`@page` 无法按 class 作用域隔离，同一时刻只挂一个打印页所以不冲突）。工具条 / 横幅 / 侧栏挂 `.no-print`，正文容器挂 `.print-root`。
 
 打印动作统一走 `src/lib/print.ts` 的 `printElement/printWithToast`，不要直接调 `window.print()`：Windows WebView2 支持原生打印；**macOS WKWebView / Linux WebKitGTK 的 `window.print()` 是静默无操作**（Tauri issue #3066），兜底路径是把「打印元素 outerHTML + 收集到的全量 CSS（含 @page 与 @media print）」拼成独立 HTML，经 `print_html` 命令（`commands/print.rs`）写进临时目录 `dictation-print/`，用系统默认浏览器打开，页面加载后自动调起浏览器的打印对话框（打印 / 存为 PDF 都可用）。打印元素靠 class 携带样式，所以克隆 DOM + 全量 CSS 即可复刻排版。
+
+### 字帖的「示范字 / 描红」怎么画
+
+`components/StrokeGlyph.tsx` 用**笔顺数据的轮廓路径**（`lib/strokes.ts::loadStrokePaths`）把字画成 `<svg>` 里的实心 path：
+
+- 好处：不依赖系统装没装楷体（Linux / 精简 Windows 上 `font-family: KaiTi` 会掉成黑体），而且和复习页的动画字形是同一份数据，写到纸上的形状和屏幕上看的完全一致
+- 坐标换算是 `HanziWriter.getScalingTransform(100, 100, 10)`，**别手写这个矩阵**：数据是 1024 见方、y 轴朝上，需要 `translate(x, h-y) scale(s, -s)`
+- 打印是同步的：页面在加载阶段就把整页用到的字 `Promise.all` 取齐，不能在点「打印」时还有字在路上
+- 没有数据的字（字母、数字、生僻字）退回普通文本，用 `fallbackSize` 控制字号
+
+方格：`.ge`（`index.css`）只负责外框——虚线边、`box-sizing: border-box`、`flex: none`（排不下时折行，而不是把格子压扁）。**十字与对角线由 `components/GridLines.tsx` 用 SVG 描边画**，不用 CSS 背景渐变：打印对话框默认关掉「背景图形」，渐变线在纸上会消失，而田 / 米 / 方的区别全在这几条线上（屏幕和打印预览都看不出来，只有出纸才发现）。方格模式（`fang`）不渲染辅助线。相邻格的边框靠 `margin-left: -1px` 叠成一条线。
+
+## 笔画数据（笔顺动画）
+
+错题本的「复习笔画」页用 [hanzi-writer](https://github.com/chanind/hanzi-writer) 播放笔顺，数据来自
+`hanzi-writer-data`（Make Me a Hanzi，Arphic Public License）。**不连 CDN**——本应用默认纯离线，见 ADR-18。
+
+- `scripts/sync-hanzi-data.mjs` 把 9574 个字打成 **256 个分片**写进 `public/hanzi/`（这是生成物，`.gitignore` 掉了），
+  `package.json` 的 `predev` / `prebuild` 会自动跑；缺依赖会直接失败，不会打出「没有笔画」的包
+- 分片规则：**码点 % 256** 决定文件名 `s??.json`（`??` 是分片号的十六进制），片内 key 是码点的十六进制
+  （`"6625"` 而不是 `"春"`）。前后端各算一次，不需要清单文件；纯 ASCII 路径省掉 Windows / percent-encoding 的一类坑
+- 每片约 37 字 / 130KB；`lib/strokes.ts` 缓存已加载的分片，失败不缓存（翻回来能重试）。整包约 33MB，是「离线可看笔顺」付的代价
+- **URL 必须相对站点根**（`import.meta.env.BASE_URL` + `hanzi/s??.json`），不要用 `document.baseURI`：
+  后者会挂到当前页面所在目录下，换个入口就 404，而 dev server 的 SPA 兜底返回的是 HTML + 200，表现成
+  「JSON 解析失败」这种看不出根因的错误
+- `components/StrokeWord.tsx`：**初始 `showCharacter: false`**，否则还没轮到的字会先整字显示、轮到再被擦掉重描；
+  淡灰轮廓（`showOutline`）当描红底，遮住模式下连轮廓也不画
+- 非汉字、没有数据的字**退回静态字形**（框内直接画这个字），不会留白
 
 ## 通用组件
 
@@ -60,7 +90,7 @@ related: [architecture.md, decisions.md]
 - 时间展示用 `formatTime`（MM-DD HH:mm）与 `practiceLabel`（今天/昨天/N 天前练过）
 - 破坏性操作一律自建弹窗，不用 `window.confirm`
 - 状态机与业务流程放页面内，不引状态库（无 redux/zustand）
-- 打印相关类名：`no-print`（打印时隐藏）、`print-page`（去阴影去宽度）、`print-row`（避免跨页断开）、`tian`（田字格）
+- 打印相关类名：`no-print`（打印时隐藏）、`print-page`（去阴影去宽度）、`print-row`（避免跨页断开）、`ge`（方格外框，辅助线见 `GridLines`）
 
 ## 容易忘的
 

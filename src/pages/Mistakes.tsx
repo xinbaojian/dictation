@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import AddMistakeModal from "../components/AddMistakeModal";
+import ConfirmModal from "../components/ConfirmModal";
 import { Toast, useNotice } from "../components/Toast";
 import { api, errorMessage, formatTime } from "../lib/ipc";
 import type { Group, Mistake } from "../types";
@@ -8,6 +9,8 @@ interface MistakesProps {
   onStart: (sessionId: number) => void;
   onGoWordbook: () => void;
   onPrint: (groupId: number | null, title: string) => void;
+  /** 进笔画复习页（按当前分组筛选） */
+  onStroke: (groupId: number | null, title: string) => void;
 }
 
 /** 与批改页一致：标红的字 = 历次批改里标过「不会写」的字 */
@@ -40,12 +43,14 @@ function MistakeWord({ word }: { word: Mistake }) {
   );
 }
 
-export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesProps) {
+export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: MistakesProps) {
   const [mistakes, setMistakes] = useState<Mistake[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [filter, setFilter] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  // 开始默写前先确认：默写会整屏切走，误点一下孩子就被打断，还平白多出一场记录
+  const [askPractice, setAskPractice] = useState(false);
   const [loading, setLoading] = useState(true);
   const [streak, setStreak] = useState(2);
   const { notice, notify } = useNotice();
@@ -130,6 +135,10 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
     return <div className="flex flex-1 items-center justify-center text-sm text-stone-400">加载中…</div>;
   }
 
+  // 笔画复习页的副标题：跟当前筛选保持一致，免得孩子以为复习的是别的分组
+  const scopeLabel =
+    filter == null ? "全部错词" : (groups.find((g) => g.id === filter)?.path ?? "错题");
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex items-start justify-between gap-4 border-b border-stone-200 px-8 py-5">
@@ -161,7 +170,15 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
             添加词语
           </button>
           <button
-            onClick={practice}
+            onClick={() => onStroke(filter, scopeLabel)}
+            disabled={mistakes.length === 0}
+            title="逐词看笔顺动画，可以遮住让孩子先自己写"
+            className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            复习笔画
+          </button>
+          <button
+            onClick={() => setAskPractice(true)}
             disabled={mistakes.length === 0 || busy}
             className="rounded-md bg-amber-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-stone-300"
           >
@@ -256,6 +273,26 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint }: MistakesPro
           </table>
         )}
       </div>
+
+      {askPractice && (
+        <ConfirmModal
+          title="开始错题专项默写？"
+          body={
+            "范围：" +
+            scopeLabel +
+            "，共 " +
+            mistakes.length +
+            " 个词。\n会把整屏切到默写页：家长读词、孩子在纸上写，写完进入批改。\n中途退出会保留进度，下次可以接着写。"
+          }
+          confirmText="开始默写"
+          cancelText="再想想"
+          onCancel={() => setAskPractice(false)}
+          onConfirm={() => {
+            setAskPractice(false);
+            void practice();
+          }}
+        />
+      )}
 
       {addOpen && (
         <AddMistakeModal

@@ -49,11 +49,14 @@ src-tauri/src/domain/   text.rs 粘贴切分、sampler.rs 抽题（纯函数，�
 src-tauri/src/repo/     groups / words / sessions / word_progress / settings / backup / sync
 src-tauri/src/commands/ library.rs（11）/ quiz.rs（14）/ system.rs（9）/ sync.rs（7）（薄封装，共 41 个命令）
 src-tauri/src/speech/   TTS 抽象 trait Speaker（V1 只有 NullSpeaker）
-src/pages/              Pick / Quiz / Review / Mistakes / History / Settings / Wordbook / PrintSheet；math/（口算：MathSheet + example + math-sheet.css）
+src/pages/              Pick / Quiz / Review / Mistakes / StrokeReview / History / Settings / Wordbook / PrintSheet；math/（口算：MathSheet + example + math-sheet.css）
 src/tools/registry.ts   工具注册表：顶栏一级菜单（TOOLS）与各工具二级菜单（NAV_BY_TOOL）、Route 联合类型
 src/lib/ipc.ts          全部自定义后端命令集中于此，类型来自 src/types.ts
+src/lib/strokes.ts      笔顺数据加载（分片缓存，本地 public/hanzi/，不联网）
 src/lib/updater.ts      自动升级状态机（插件 API：check / downloadAndInstall）
 scripts/gen-updater-manifest.mjs  CI 里把各平台 .sig 汇总成 Release 的 latest.json
+scripts/sync-hanzi-data.mjs       把 hanzi-writer-data 打成 256 个分片写进 public/hanzi/（predev/prebuild 自动跑）
+public/hanzi/           笔画数据分片，生成物（.gitignore 掉了），别手改也别提交；约 33MB
 ```
 
 ## 硬约束（改代码前必须知道）
@@ -69,6 +72,7 @@ scripts/gen-updater-manifest.mjs  CI 里把各平台 .sig 汇总成 Release 的 
 9. **updater 签名私钥绝不入库、公钥别随便换**：私钥只在 `~/.tauri/dictation.key` 与 GitHub Secret `TAURI_SIGNING_PRIVATE_KEY`；公钥写死在 `tauri.conf.json`，换公钥等于让所有已装旧版失去升级能力。CI 缺私钥时 `gen-updater-manifest.mjs` 会主动让发版失败，别改成「跳过」。
 10. **同步只搬运整库快照，绝不做行级复制**：本地 SQLite 永远是唯一主库；云端只存一行 `LONGBLOB + version`，推送走 CAS 乐观锁，拉取写 `pending.db` 并在下次启动、打开连接之前替换（备份旧库 + 清 WAL）。同步凭据（含密码）绝不进 `settings` 表、绝不回传前端；网络命令必须 `async fn` + `spawn_blocking`，`MutexGuard` 不跨 await。整库恢复属数据目录级操作，不算违反第 1 条，但同步不能成为业务写入口。详见 [wiki/sync.md](./wiki/sync.md) 与 ADR-17。
 11. **单实例插件必须第一个注册**（`tauri-plugin-single-instance`）：第二个进程启动时会 `wal_checkpoint` 甚至替换同一个 SQLite 库，和同步的 pending 替换叠加会让旧实例写进被 unlink 的 inode（静默丢数据）。第二次启动只把已有窗口提到前台，绝不开第二个进程。别删这个插件，也别把它挪到其它 `.plugin()` 之后。
+12. **笔画数据必须随包发，不许改回 CDN**：数据由 `scripts/sync-hanzi-data.mjs` 打成 256 个分片放 `public/hanzi/`（生成物，不进库），`predev` / `prebuild` 自动跑。取数据的 URL 一律用站点根（`import.meta.env.BASE_URL`）拼，**别用 `document.baseURI`**——见 wiki/pitfalls.md 第 24 条。默认纯离线是产品定义，理由见 ADR-18。
 
 ## 代码约定
 
@@ -85,10 +89,11 @@ scripts/gen-updater-manifest.mjs  CI 里把各平台 .sig 汇总成 Release 的 
 | 加一个后端能力 | `repo/` 加函数 → `commands/` 加 `#[tauri::command]` → `lib.rs` 注册 → `ipc.ts` 加方法 → `types.ts` 加类型 |
 | 加表/改表 | 新增 `migrations/000N_xxx.sql` + `db/mod.rs` 的 `MIGRATIONS` 数组追加（绝不改历史文件） |
 | 加设置项 | `repo/settings.rs` 的 `SettingsDto`（带默认值）→ `commands/system.rs` 已有 get/save → `pages/Settings.tsx` |
-| 打印相关 | `pages/PrintSheet.tsx` + `index.css` 里的 `.tian` 与 ```media print` |
+| 打印 / 字帖 | `pages/PrintSheet.tsx`（每行一个词：示范字 → 描红 → 空格，选项存 localStorage）+ `components/StrokeGlyph.tsx`（用笔顺数据把字画成 SVG，不依赖楷体）+ `components/GridLines.tsx`（方格辅助线，**必须用 SVG 描边，CSS 背景打印不出**）+ `index.css` 的 `.ge` 与 `@media print` |
 | 分组树拖动 | `repo/groups.rs::move_to`（后端）+ `pages/Wordbook.tsx` 的 `targetFor / zoneOf`（落点判定） |
 | 自动升级 | `src/lib/updater.ts` + `Settings.tsx` / `App.tsx`；清单与平台映射在 `scripts/gen-updater-manifest.mjs` |
 | 跨设备同步 | `repo/sync.rs`（`SnapshotStore` / 快照 / CAS / pending）+ `commands/sync.rs` + `db/mod.rs::init` + `Settings.tsx`；见 [wiki/sync.md](./wiki/sync.md) |
+| 笔顺动画 / 笔画复习 | `src/components/StrokeWord.tsx` + `src/lib/strokes.ts` + `pages/StrokeReview.tsx`；数据换代只需升 `hanzi-writer-data` 并让脚本重刷（`.stamp` 里的 FORMAT 一起改） |
 
 ## 已知坑
 

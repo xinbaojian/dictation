@@ -10,6 +10,7 @@ import PrintSheet from "./pages/PrintSheet";
 import Quiz from "./pages/Quiz";
 import Review from "./pages/Review";
 import SettingsPage from "./pages/Settings";
+import StrokeReview from "./pages/StrokeReview";
 import Wordbook from "./pages/Wordbook";
 import { NAV_BY_TOOL, TOOLS, type Route, type ToolId } from "./tools/registry";
 
@@ -67,11 +68,12 @@ export default function App() {
 
   const activeTool: ToolId = route.name === "settings" ? lastTool : route.name;
 
-  // 侧栏高亮：quiz/review 归「默写」，打印页按来源归「词表 / 错题」
+  // 侧栏高亮：quiz/review/stroke 归「默写 / 错题」，打印页按来源归「词表 / 错题」
   let activeNav: string;
   if (route.name === "settings") activeNav = "";
   else if (route.name === "math") activeNav = "sheet";
   else if (route.page === "quiz" || route.page === "review") activeNav = "pick";
+  else if (route.page === "stroke") activeNav = "mistakes";
   else if (route.page === "print") activeNav = route.mode === "mistakes" ? "mistakes" : "wordbook";
   else activeNav = route.page;
 
@@ -79,8 +81,8 @@ export default function App() {
   const dr = route.name === "settings" || route.name === "math" ? null : route;
 
   const updateAvailable = updater.state.phase === "available" && !updater.state.dismissed;
-  // 默写、批改、打印、设置页不弹横幅：前者不能打断孩子，设置页自己有完整卡片
-  const quietRoute = ["quiz", "review", "print", "settings"].includes(routeKey);
+  // 默写、批改、笔画复习、打印、设置页不弹横幅：前几个不能打断孩子，设置页自己有完整卡片
+  const quietRoute = ["quiz", "review", "stroke", "print", "settings"].includes(routeKey);
   const showUpdateBanner = updateAvailable && !quietRoute;
   const showSyncBanner = !!syncNotice && !quietRoute;
   const settingsDot = updateAvailable || !!syncNotice;
@@ -195,9 +197,19 @@ export default function App() {
             <Mistakes
               onStart={startSession}
               onGoWordbook={() => navigate({ name: "dictation", page: "wordbook" })}
+              onStroke={(groupId, title) =>
+                navigate({ name: "dictation", page: "stroke", groupId, title })
+              }
               onPrint={(groupId, title) =>
                 navigate({ name: "dictation", page: "print", mode: "mistakes", groupId, title })
               }
+            />
+          )}
+          {dr?.page === "stroke" && (
+            <StrokeReview
+              groupId={dr.groupId}
+              title={dr.title}
+              onBack={() => navigate({ name: "dictation", page: "mistakes" })}
             />
           )}
           {dr?.page === "print" && (

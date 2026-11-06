@@ -199,3 +199,35 @@ were found in the response `platforms` object
 **做法**：CI macOS job 用 `--bundles app --bundles dmg`（dmg 供人工下载，app 包给 updater）；
 `gen-updater-manifest.mjs` 任一平台缺 `.sig` 直接 `exit 1`，绝不能带病发布。
 本地验证更新包用 `npm run tauri -- build --bundles app`（本机打 dmg 另有第 17 条的坑）。
+
+## 24. 静态资源用 `document.baseURI` 拼路径，会 404 还看不出是 404
+
+笔画数据（`public/hanzi/`）最初这样取：
+
+```ts
+new URL("hanzi/u6625.json", document.baseURI)   // ❌
+```
+
+`index.html` 在根目录时看着没事，但 baseURI 带的是**当前页面所在目录**——换个入口（比如
+`/dev-preview/stroke.html`）就变成 `/dev-preview/hanzi/...`。更坑的是 dev server 对未知路径
+走 SPA 兜底，**返回 `index.html` 且状态码 200**，`res.json()` 抛
+`SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON`，
+`hanzi-writer` 再把它吞成 `onLoadCharDataError`，最后只表现为「格子是空的」。
+
+**做法**：统一用站点根拼（`import.meta.env.BASE_URL` + `hanzi/s??.json`）；加载器里显式校验
+JSON 形状，别把「拿到了 HTML」当成功。同类问题适用于以后任何 `public/` 下的资源。
+
+## 25. 打印件里的线条别用 CSS 背景画，出纸就没了
+
+字帖的田字格原来把十字线画在 `background-image: linear-gradient(...)` 上。屏幕上、`emulateMediaType('print')`
+的截图里都正常，**但打印对话框的「背景图形 / Background graphics」默认是关的**（Chrome / Edge 都是），
+于是纸上只剩虚线外框，田字格、米字格的辅助线全丢——而这两个选项的差别全在那几条线上。
+
+`print-color-adjust: exact` 也不救：它管的是「允许改写颜色」，不覆盖那个开关。
+
+**做法**：打印件里的线一律用**前景内容**画——`border`、`<svg><path stroke>`、伪元素的 `border` 都行。
+字帖现在走 `components/GridLines.tsx`（SVG 描边，`vectorEffect="non-scaling-stroke"` 保证 mm 格子下仍是 1px）。
+口算卷的 3×10 格线一直用的 `border`，是同一个道理。
+
+判断方法：`emulateMediaType('print')` 截图看不出这类问题（背景在预览里还画着），必须真出一次 PDF 或用
+「打印背景图形 = 关」的默认设置看。

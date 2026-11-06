@@ -1,5 +1,7 @@
 node_modules
 dist
+# 笔画数据是从 node_modules/hanzi-writer-data 生成出来的（scripts/sync-hanzi-data.mjs）
+public/hanzi/
 src-tauri/target
 *.db
 *.db-wal

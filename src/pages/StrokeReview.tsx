@@ -1,0 +1,257 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import StrokeWord, { type StrokeWordHandle } from "../components/StrokeWord";
+import { api, errorMessage } from "../lib/ipc";
+import type { Mistake } from "../types";
+
+interface StrokeReviewProps {
+  groupId: number | null;
+  /** 副标题：与错题本当前的筛选保持一致 */
+  title: string;
+  onBack: () => void;
+}
+
+/** 卡片内可用的横向空间：max-w-3xl(768) 减去 px-6 两侧 */
+const CARD_INNER = 720;
+const GAP = 20;
+
+/** 按字数选田字格边长：短词给足尺寸，长词按「两行放得下」反算，别让格子挤成一片。
+ *  13 字以上（一整句）会折算到 96px 下限、自然折成多行，由外层滚动兜底。 */
+function boxSize(count: number): number {
+  if (count <= 2) return 200;
+  if (count === 3) return 176;
+  if (count === 4) return 152;
+  const cols = Math.ceil(count / 2);
+  // 再留 8px 给卡片的左右边框，否则刚好卡在边界上会掉成 3 个一行
+  const fit = Math.floor((CARD_INNER - 8 - (cols - 1) * GAP) / cols / 4) * 4;
+  return Math.max(96, Math.min(132, fit));
+}
+
+/** 错题本的「笔画复习」：逐词展示笔顺动画，可先遮住让孩子自己写再对照 */
+export default function StrokeReview({ groupId, title, onBack }: StrokeReviewProps) {
+  const [words, setWords] = useState<Mistake[]>([]);
+  const [index, setIndex] = useState(0);
+  const [hideMode, setHideMode] = useState(false);
+  const [revealed, setRevealed] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const wordRef = useRef<StrokeWordHandle>(null);
+  // 挡住连点：一次翻两词会让孩子莫名其妙漏掉一个
+  const navAt = useRef(0);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setWords(await api.listMistakes(groupId));
+      } catch (e) {
+        setError(errorMessage(e));
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [groupId]);
+
+  const total = words.length;
+  const word = words[index];
+  const masked = hideMode && !revealed;
+  const charCount = word ? [...word.text].length : 0;
+  // 词表是按行/逗号切分的，一句话没有标点也会变成一个很长的「词」；
+  // boxSize 会随字数缩格子，再长的靠下面的滚动兜底
+  const size = boxSize(charCount);
+
+  const go = useCallback(
+    (delta: number) => {
+      const now = Date.now();
+      if (now - navAt.current < 180) return;
+      navAt.current = now;
+      setIndex((i) => Math.min(Math.max(i + delta, 0), Math.max(total - 1, 0)));
+      setRevealed(!hideMode);
+    },
+    [hideMode, total],
+  );
+
+  /** 往后翻；到最后一个词就是「完成」——键盘和页脚共用同一条路径，
+   *  否则空格走到末词会变成死键（进度 100% 却毫无反应） */
+  const forward = useCallback(() => {
+    if (index + 1 >= total) {
+      onBack();
+      return;
+    }
+    go(1);
+  }, [index, total, go, onBack]);
+
+  /** 重播；遮住状态下先掀开（换了 masked 会重建 writer，自然从头播） */
+  const replay = useCallback(
+    (only?: number) => {
+      if (masked) {
+        setRevealed(true);
+        return;
+      }
+      wordRef.current?.play(only);
+    },
+    [masked],
+  );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === "Space" || e.key === "ArrowRight") {
+        e.preventDefault();
+        forward();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        go(-1);
+      } else if (e.key === "r" || e.key === "R") {
+        e.preventDefault();
+        replay();
+      } else if (e.key === "Enter" && masked) {
+        e.preventDefault();
+        setRevealed(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [forward, go, replay, masked]);
+
+  const toggleHide = () => {
+    const next = !hideMode;
+    setHideMode(next);
+    setRevealed(!next);
+  };
+
+  if (loading) {
+    return <div className="flex flex-1 items-center justify-center text-sm text-stone-400">加载中…</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+        <p className="text-sm text-rose-600">{error}</p>
+        <button
+          onClick={onBack}
+          className="rounded-md border border-stone-200 px-4 py-1.5 text-sm text-stone-600 hover:bg-stone-50"
+        >
+          返回错题本
+        </button>
+      </div>
+    );
+  }
+
+  if (total === 0 || !word) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+        <p className="text-sm text-stone-500">这里还没有可以复习的词</p>
+        <p className="text-xs text-stone-400">默写批改出错的词会自动收进错题本</p>
+        <button
+          onClick={onBack}
+          className="rounded-md border border-stone-200 px-4 py-1.5 text-sm text-stone-600 hover:bg-stone-50"
+        >
+          返回错题本
+        </button>
+      </div>
+    );
+  }
+
+  const last = index + 1 >= total;
+  const progress = ((index + 1) / total) * 100;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <header className="flex items-start justify-between gap-4 border-b border-stone-200 px-8 py-5">
+        <div>
+          <h1 className="text-lg font-semibold text-stone-800">笔画复习</h1>
+          <p className="mt-1 text-sm text-stone-500">
+            {title} · 共 {total} 个词
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleHide}
+            title="每个词先遮住笔画，孩子在纸上写完再点「显示笔画」对照"
+            className={
+              "rounded-md border px-3 py-1.5 text-sm transition " +
+              (hideMode
+                ? "border-amber-300 bg-amber-50 font-medium text-amber-700"
+                : "border-stone-200 text-stone-600 hover:bg-stone-50")
+            }
+          >
+            {hideMode ? "先自己写 ✓" : "先自己写"}
+          </button>
+          <button
+            onClick={onBack}
+            className="rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50"
+          >
+            退出
+          </button>
+        </div>
+      </header>
+
+      {/* 超长词（没有标点的一整句）会撑高内容：这里必须能滚，且用 m-auto 而不是
+          justify-center——后者在内容高于容器时会把顶部顶出可视区，滚也滚不到 */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8">
+        <div className="m-auto flex w-full max-w-3xl flex-col items-center gap-5 py-4">
+          <div className="w-full">
+            <div className="mb-2 flex items-baseline justify-between text-xs text-stone-400">
+              <span>
+                第 {index + 1} / {total} 个
+              </span>
+              <span>{charCount} 个字</span>
+            </div>
+            <div className="h-1 overflow-hidden rounded-full bg-stone-200">
+              <div className="h-full rounded-full bg-amber-500 transition-all" style={{ width: progress + "%" }} />
+            </div>
+          </div>
+
+          <div className="flex min-h-72 w-full flex-col items-center justify-center rounded-2xl border border-stone-200 bg-white px-6 py-10 shadow-sm">
+            <StrokeWord
+              key={word.id}
+              ref={wordRef}
+              text={word.text}
+              size={size}
+              masked={masked}
+              onPick={(i) => replay(i)}
+            />
+          </div>
+
+          <p className="text-xs text-stone-400">
+            {masked
+              ? "先在纸上写一遍，写完点「显示笔画」对照"
+              : "空格 / → 下一个 · ← 上一个 · R 重播 · 点田字格只看这个字"}
+          </p>
+          <p className="text-xs text-stone-400">
+            <span className="text-stone-300">{word.groupName}</span>
+            {" · 错过 " + word.wrongCount + " 次 · 连对 " + word.correctStreak + " 次"}
+          </p>
+        </div>
+      </div>
+
+      <footer className="flex items-center justify-center gap-3 px-8 pb-8">
+        <button
+          onClick={() => go(-1)}
+          disabled={index === 0}
+          className="rounded-md border border-stone-200 bg-white px-4 py-2 text-sm text-stone-600 hover:bg-stone-50 disabled:opacity-40"
+        >
+          上一个
+        </button>
+        <button
+          onClick={() => replay()}
+          className="rounded-md border border-stone-300 bg-white px-5 py-2 text-sm text-stone-700 hover:bg-stone-50"
+        >
+          重播笔画
+        </button>
+        {masked && (
+          <button
+            onClick={() => setRevealed(true)}
+            className="rounded-md bg-amber-600 px-5 py-2 text-sm font-medium text-white hover:bg-amber-700"
+          >
+            显示笔画
+          </button>
+        )}
+        <button
+          onClick={forward}
+          className="rounded-md bg-stone-800 px-7 py-2 text-sm font-medium text-white hover:bg-stone-900"
+        >
+          {last ? "完成" : "下一个"}
+        </button>
+      </footer>
+    </div>
+  );
+}
