@@ -40,7 +40,8 @@ export interface NavItem {
   route: Route;
 }
 
-/** 各工具的二级菜单（侧栏）；「设置」是全局页，不在任何工具菜单里 */
+/** 各工具的二级菜单（侧栏）；「设置」是全局页，不在任何工具菜单里。
+ *  注意：label 保持 ≤2 个汉字——侧栏按钮宽 w-11（44px），更长的文案会换行。 */
 export const NAV_BY_TOOL: Record<ToolId, readonly NavItem[]> = {
   dictation: [
     { key: "pick", label: "默写", route: { name: "dictation", page: "pick" } },
@@ -48,5 +49,5 @@ export const NAV_BY_TOOL: Record<ToolId, readonly NavItem[]> = {
     { key: "mistakes", label: "错题", route: { name: "dictation", page: "mistakes" } },
     { key: "history", label: "记录", route: { name: "dictation", page: "history" } },
   ],
-  math: [{ key: "sheet", label: "出题打印", route: { name: "math", page: "sheet" } }],
+  math: [{ key: "sheet", label: "出题", route: { name: "math", page: "sheet" } }],
 };
