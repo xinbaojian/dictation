@@ -37,7 +37,7 @@ related: [architecture.md, decisions.md]
 | 设置 | `pages/Settings.tsx` | 遮罩/连对/字号、备份导出导入、打开数据目录（连字已挪到抽题页的抽词偏好） |
 | 词表 | `pages/Wordbook.tsx` | 分组树（可折叠、默认全部折叠、**可拖动调整层级与顺序**）、词数/错题/最近练习、行内编辑、粘贴导入、标记错题 |
 | 打印 | `pages/PrintSheet.tsx` | A4 排版 + 田字格，`window.print()` |
-| 口算练习 | `pages/math/MathSheet.tsx` | 选项工具条（留空位置 / 两步运算符 / 答案显隐）、A4 满幅卷面（3×10 格 + 可裁剪答案条 + 口诀示范条 `example.ts`）、选项存 localStorage、出题走 `generate_math_sheet` 命令 |
+| 口算练习 | `pages/math/MathSheet.tsx` | 左侧条件面板（留空位置 / 两步运算符 / 四位置取值区间 / 答案显隐，选项存 localStorage）、A4 满幅卷面（3×10 格 + 可裁剪答案条 + 口诀示范条 `example.ts`）、出题走 `generate_math_sheet` 命令（区间默认 = 三段难度，自定义 = 单池平铺，见 `domain/math.rs`） |
 
 ## 打印
 
