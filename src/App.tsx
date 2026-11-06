@@ -169,17 +169,11 @@ export default function App() {
         <nav className="no-print flex w-16 shrink-0 flex-col items-center gap-1 border-r border-stone-200 bg-white py-3">
           {NAV_BY_TOOL[activeTool].map((item) => (
             <button
-              key={item.page}
-              onClick={() =>
-                navigate(
-                  activeTool === "math"
-                    ? { name: "math", page: "sheet" }
-                    : ({ name: "dictation", page: item.page } as Route),
-                )
-              }
+              key={item.key}
+              onClick={() => navigate(item.route)}
               className={
                 "w-11 rounded-md py-2 text-xs transition " +
-                (activeNav === item.page
+                (activeNav === item.key
                   ? "bg-stone-900 font-medium text-white"
                   : "text-stone-500 hover:bg-stone-100")
               }

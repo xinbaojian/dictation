@@ -3,7 +3,8 @@
 
 export type ToolId = "dictation" | "math";
 
-/** 全局路由：name 是唯一判别字段（工具 id 或 "settings"）；settings 是全局页（顶栏入口） */
+/** 全局路由：name 是唯一判别字段（工具 id 或 "settings"）；settings 是全局页（顶栏入口）。
+ *  注意：各工具的 page 取值必须全局唯一——App.tsx 的 routeKey 靠它判等（横幅拉取时机 / quietRoute）。 */
 export type Route =
   // ── 生词默写 ──
   | { name: "dictation"; page: "pick" }
@@ -31,13 +32,21 @@ export const TOOLS: ToolDef[] = [
   { id: "math", label: "口算练习", home: { name: "math", page: "sheet" } },
 ];
 
+/** 二级菜单项：route 直接给出完整路由（限无参数页面），App.tsx 挂载时无需强转 */
+export interface NavItem {
+  /** 高亮判定用的 key（与无参数页面的 page 同名） */
+  key: string;
+  label: string;
+  route: Route;
+}
+
 /** 各工具的二级菜单（侧栏）；「设置」是全局页，不在任何工具菜单里 */
-export const NAV_BY_TOOL: Record<ToolId, readonly { page: string; label: string }[]> = {
+export const NAV_BY_TOOL: Record<ToolId, readonly NavItem[]> = {
   dictation: [
-    { page: "pick", label: "默写" },
-    { page: "wordbook", label: "词表" },
-    { page: "mistakes", label: "错题" },
-    { page: "history", label: "记录" },
+    { key: "pick", label: "默写", route: { name: "dictation", page: "pick" } },
+    { key: "wordbook", label: "词表", route: { name: "dictation", page: "wordbook" } },
+    { key: "mistakes", label: "错题", route: { name: "dictation", page: "mistakes" } },
+    { key: "history", label: "记录", route: { name: "dictation", page: "history" } },
   ],
-  math: [{ page: "sheet", label: "出题打印" }],
+  math: [{ key: "sheet", label: "出题打印", route: { name: "math", page: "sheet" } }],
 };

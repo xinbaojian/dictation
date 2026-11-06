@@ -69,6 +69,10 @@ export default function MathSheetPage() {
       ? { pos: options.pos, op1: options.op1, op2: "a" }
       : { pos: options.pos, op1: options.op1, op2: options.op2 };
   const autoNote = (options.op1 === "d" || options.op1 === "s") && options.op2 === "s";
+  // 随机（或除/减）配 减/随机 时，无解的符号组合会被引擎略过——明说，别让家长以为随机失效
+  const skipNote =
+    (eff.op1 === "random" || eff.op1 === "d" || eff.op1 === "s") &&
+    (eff.op2 === "s" || eff.op2 === "random");
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(options));
@@ -170,6 +174,7 @@ export default function MathSheetPage() {
           {eff.op2 === "random" ? "±" : OP_SYM[eff.op2]} · 题目 #{seed} ·{" "}
           {options.showAns ? "答案条可沿虚线剪下" : "已隐藏答案，打印出来直接给孩子做"}
           {autoNote ? " · 第一步是除或减时第二步只能用加，已自动切换" : ""}
+          {skipNote ? " · 随机已跳过无解组合（除 / 减 配 减）" : ""}
         </p>
 
         {loading ? (

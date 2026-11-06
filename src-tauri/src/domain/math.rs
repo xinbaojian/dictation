@@ -112,7 +112,8 @@ impl Rng {
         self.0 = self.0.wrapping_add(0x6D2B79F5);
         let mut t = self.0;
         t = (t ^ (t >> 15)).wrapping_mul(1 | t);
-        t = t.wrapping_add((t ^ (t >> 7)).wrapping_mul(61 | t));
+        // 注意外层还要 ^ t（原 JS：t = (t + imul(...)) ^ t），漏掉会得到完全不同的序列
+        t = t.wrapping_add((t ^ (t >> 7)).wrapping_mul(61 | t)) ^ t;
         ((t ^ (t >> 14)) as f64) / 4294967296.0
     }
 }
@@ -389,6 +390,15 @@ mod tests {
             }
         }
         sols
+    }
+
+    #[test]
+    fn mulberry32_matches_reference_vectors() {
+        // 向量值由原 JS 出题器的 rngFrom 独立实现（Python）算出，钉死「逐位一致」不被回归
+        let mut rnd = Rng::new(20261105);
+        assert_eq!(rnd.next_f64(), 0.10204124473966658);
+        assert_eq!(rnd.next_f64(), 0.6270352604333311);
+        assert_eq!(rnd.next_f64(), 0.22736229840666056);
     }
 
     #[test]
