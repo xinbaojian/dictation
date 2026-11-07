@@ -284,7 +284,7 @@ fn load_char_marks(
 }
 
 /// 单个词的「标错过的字」聚合，给 AI 讲解卡当上下文。
-/// 逻辑与 load_char_marks 相同，只是按 word_id 过滤：批改记录 + 手工标记合并，升序去重。
+/// 与 load_char_marks 同源，但不限 status、只按 word_id 过滤：批改记录 + 手工标记合并，升序去重。
 pub struct WordMarks {
     pub wrong_chars: Vec<i64>,
     pub whole_word_wrong: i64,

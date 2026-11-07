@@ -99,8 +99,9 @@ Tailscale 解封装后走 `tailscale0`，不经安全组，收紧公网不影响
 用户确认后可用「重置同步状态」把坏文件隔离到 `backups/sync/` 并重建；`remoteVersion` 归零后下一次同步会先走确认流程，
 不会静默覆盖云端。
 
-`content_hash`（`repo/sync.rs`）对 `TABLES` 里的业务表（groups / words / sessions / session_items）
+`content_hash`（`repo/sync.rs`）对 `TABLES` 里的业务表（groups / words / sessions / session_items / ai_cards）
 `SELECT *` 逐行逐列算 sha256：自动适配列变化，但**新增业务表必须同步加进 `TABLES`**。
+旧 4 表在 `TABLES` 中的相对顺序是旧快照哈希逐字节兼容的前提，只能追加、不能重排（有 `legacy_four_table_hash` 测试钉住）。
 刻意排除 `_sync_meta`（同步元数据）与 `settings`（字号 / 遮罩秒数 / 错题本出本阈值）——
 两台机器字号不同不该被算成本机内容有改动，否则每次拉取都会弹覆盖确认。
 注意 `settings` 含 `streak_to_master`（出本阈值），所以**替换前会先把本机的 settings 写进 `pending.db` 再 rename**，

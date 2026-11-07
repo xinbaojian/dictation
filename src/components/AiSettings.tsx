@@ -46,7 +46,7 @@ export default function AiSettings({ notify }: { notify: (kind: "ok" | "error", 
     if (busy) return;
     setBusy(true);
     try {
-      const reply = await api.testAiConfig();
+      const reply = await api.testAiConfig(baseUrl.trim(), model.trim(), apiKey.trim() || null);
       notify("ok", "连接正常，模型回复：" + reply);
     } catch (e) {
       notify("error", "连接失败：" + errorMessage(e));
@@ -64,7 +64,9 @@ export default function AiSettings({ notify }: { notify: (kind: "ok" | "error", 
       setBaseUrl("");
       setModel("");
       setApiKey("");
-      notify("ok", "AI 配置已清除，应用回到纯离线状态");
+      // 后端 I/O 失败已由 catch 报错；这里按返回值判定，configured 仍为 true 属理论不可达的防御分支
+      if (!v.configured) notify("ok", "AI 配置已清除，应用回到纯离线状态");
+      else notify("error", "清除失败：配置仍生效，请重试");
     } catch (e) {
       notify("error", errorMessage(e));
     } finally {
@@ -87,7 +89,7 @@ export default function AiSettings({ notify }: { notify: (kind: "ok" | "error", 
       </div>
       <p className="mt-2 text-xs leading-5 text-stone-500">
         配置后可在错题的笔画复习页生成「巧记讲解卡」（部件拆解、记忆口诀、例句、易混字辨析）。
-        生成时会把<strong>词语本身</strong>发送到你配置的服务，除此之外不发送任何数据；
+        生成时会把<strong>词语本身及其错字情况、错误次数</strong>发送到你配置的服务，除此之外不发送任何数据；
         内容缓存在本机，生成一次之后离线也能看。不配置则完全离线，与现在一样。
       </p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -134,7 +136,7 @@ export default function AiSettings({ notify }: { notify: (kind: "ok" | "error", 
         </button>
         <button
           onClick={() => void test()}
-          disabled={!view.configured || busy}
+          disabled={busy || (!(baseUrl.trim() && model.trim()) && !view.configured)}
           className="rounded-md border border-stone-200 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
         >
           测试连接
