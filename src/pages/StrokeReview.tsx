@@ -55,6 +55,8 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
   const wordRef = useRef<StrokeWordHandle>(null);
   // 挡住连点：一次翻两词会让孩子莫名其妙漏掉一个
   const navAt = useRef(0);
+  // 串词竞态守卫：翻词 / 生成都可能异步返回，只有 id 与当前词一致才允许 setCard
+  const currentWordId = useRef<number | null>(null);
   const { notice, notify } = useNotice();
 
   useEffect(() => {
@@ -103,21 +105,28 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
 
   // 翻词时取当前词的缓存卡（本地查询，快）；失败静默——没有卡不该报错
   useEffect(() => {
+    currentWordId.current = word?.id ?? null;
     setCard(null);
     const id = word?.id;
     if (id == null) return;
     void api
       .getWordCard(id)
-      .then(setCard)
+      .then((c) => {
+        if (currentWordId.current !== id) return;
+        setCard(c);
+      })
       .catch(() => {});
   }, [word?.id]);
 
   // 生成讲解卡：busy 防连点；失败 toast，不掩盖已有的缓存卡
   const generate = useCallback(async () => {
     if (!word || generating) return;
+    const id = word.id;
     setGenerating(true);
     try {
-      setCard(await api.generateWordCard(word.id));
+      const c = await api.generateWordCard(id);
+      if (currentWordId.current !== id) return;
+      setCard(c);
     } catch (e) {
       notify("error", "讲解生成失败：" + errorMessage(e));
     } finally {
@@ -323,6 +332,7 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
           </div>
 
           <MnemonicCard
+            key={word.id}
             word={word}
             card={card}
             aiReady={aiReady}
