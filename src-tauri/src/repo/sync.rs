@@ -3046,6 +3046,7 @@ mod tests {
                 streak_to_master: 3,
                 mask_seconds: 8,
                 auto_check_updates: false,
+                stroke_auto_speak: true,
             },
         )
         .unwrap();
@@ -3064,6 +3065,7 @@ mod tests {
         assert_eq!(s.streak_to_master, 3, "出本阈值也不能被云端覆盖");
         assert_eq!(s.mask_seconds, 8);
         assert!(!s.auto_check_updates, "启动自动检查开关同样是本机偏好");
+        assert!(s.stroke_auto_speak, "笔画复习自动朗读开关同样是本机偏好");
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -66,6 +66,8 @@ related: [architecture.md, decisions.md]
 同一页的**拼音**与**朗读**也是离线的：拼音用 `pinyin-pro` 纯前端转换（`lib/pinyin.ts`，整词一次转换
 做多音字消歧、再与字符对齐，仅此页显示，见 ADR-19）；朗读走后端 `speech/` 的系统语音
 （`speak_text` / `stop_speak` 命令，macOS say / Windows SAPI / Linux spd-say）。
+自动朗读默认关，偏好存后端设置 `strokeAutoSpeak`（见 ADR-19 修订）：设置页开关与复习页内
+「自动朗读」按钮读写同一个值，页内切换是「乐观生效 + 写回 + 失败回滚」。
 
 - `scripts/sync-hanzi-data.mjs` 把 9574 个字打成 **256 个分片**写进 `public/hanzi/`（这是生成物，`.gitignore` 掉了），
   `package.json` 的 `predev` / `prebuild` 会自动跑；缺依赖会直接失败，不会打出「没有笔画」的包

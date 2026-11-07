@@ -69,7 +69,7 @@ related: [quiz-flow.md, architecture.md]
 
 ### settings
 
-键值表，V1 只有一行：`key='app'`，值是一段 JSON（`maskSeconds / streakToMaster / wordFontSize`；连字已挪到每场默写的抽词偏好）。读时解析失败一律回落默认值；结构体带 `#[serde(default)]`，新增字段对旧库天然兼容（缺字段 = 默认值）。
+键值表，V1 只有一行：`key='app'`，值是一段 JSON（`maskSeconds / streakToMaster / wordFontSize / autoCheckUpdates / strokeAutoSpeak`；连字已挪到每场默写的抽词偏好）。读时解析失败一律回落默认值；结构体带 `#[serde(default)]`，新增字段对旧库天然兼容（缺字段 = 默认值）。
 
 ### _sync_meta（只在同步启用后出现）
 

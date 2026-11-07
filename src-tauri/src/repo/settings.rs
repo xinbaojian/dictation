@@ -15,6 +15,8 @@ pub struct SettingsDto {
     pub word_font_size: i64,
     /// 是否在每次启动时自动检查新版本；关闭后只能手动点「检查更新」
     pub auto_check_updates: bool,
+    /// 笔画复习页翻到每个词时是否自动朗读；默认关，页内与设置页共用这一个开关
+    pub stroke_auto_speak: bool,
 }
 
 impl Default for SettingsDto {
@@ -24,6 +26,7 @@ impl Default for SettingsDto {
             streak_to_master: 2,
             word_font_size: 96,
             auto_check_updates: true,
+            stroke_auto_speak: false,
         }
     }
 }
@@ -43,6 +46,7 @@ pub fn save(conn: &Connection, input: &SettingsDto) -> AppResult<SettingsDto> {
         streak_to_master: input.streak_to_master.clamp(1, 5),
         word_font_size: input.word_font_size.clamp(48, 200),
         auto_check_updates: input.auto_check_updates,
+        stroke_auto_speak: input.stroke_auto_speak,
     };
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
@@ -82,5 +86,32 @@ mod tests {
         let saved = save(&conn, &dto).unwrap();
         assert!(!saved.auto_check_updates);
         assert!(!load(&conn).unwrap().auto_check_updates, "关闭要能存住");
+    }
+
+    /// 加了这个字段之前存下的设置 JSON 没有它：反序列化必须按默认「关」补齐。
+    /// （自动朗读曾存前端 localStorage 且默认开，本字段上线后统一改为默认关，老用户需显式开启）
+    #[test]
+    fn legacy_settings_without_stroke_auto_speak_defaults_off() {
+        let conn = db::open_memory();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+            params![KEY, r#"{"maskSeconds":3,"streakToMaster":2,"wordFontSize":96,"autoCheckUpdates":true}"#],
+        )
+        .unwrap();
+        assert!(!load(&conn).unwrap().stroke_auto_speak);
+    }
+
+    #[test]
+    fn stroke_auto_speak_round_trip() {
+        let conn = db::open_memory();
+        assert!(!SettingsDto::default().stroke_auto_speak, "默认关闭");
+
+        let dto = SettingsDto {
+            stroke_auto_speak: true,
+            ..Default::default()
+        };
+        let saved = save(&conn, &dto).unwrap();
+        assert!(saved.stroke_auto_speak);
+        assert!(load(&conn).unwrap().stroke_auto_speak, "开启要能存住");
     }
 }

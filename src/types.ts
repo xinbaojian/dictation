@@ -113,6 +113,8 @@ export interface Settings {
   wordFontSize: number;
   /** 启动时是否自动检查新版本；关闭后只能手动检查（默认开启） */
   autoCheckUpdates: boolean;
+  /** 笔画复习页翻到每个词时是否自动朗读（默认关闭）；页内开关与设置页共用 */
+  strokeAutoSpeak: boolean;
 }
 
 /** 抽词偏好：开一场默写时勾选，全不选 = 纯随机 */

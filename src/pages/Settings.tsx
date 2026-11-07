@@ -164,6 +164,31 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
     }
   };
 
+  /** 「笔画复习自动朗读」开关：点了立即保存生效，无需再点上面的「保存设置」 */
+  const toggleStrokeAutoSpeak = async () => {
+    if (!savedValue || busy) return;
+    setBusy(true);
+    try {
+      const r = await api.saveSettings({
+        ...savedValue,
+        strokeAutoSpeak: !savedValue.strokeAutoSpeak,
+      });
+      setSavedValue(r);
+      // 只同步开关字段回表单，别覆盖「默写」区还没保存的编辑
+      setValue((v) => (v ? { ...v, strokeAutoSpeak: r.strokeAutoSpeak } : r));
+      notify(
+        "ok",
+        r.strokeAutoSpeak
+          ? "已开启：笔画复习翻到每个词会自动读一遍"
+          : "已关闭：进入笔画复习不再自动朗读，页内可点「读一遍」手动读",
+      );
+    } catch (e) {
+      notify("error", errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const backup = async () => {
     try {
       const path = await api.createBackup(backupDir || null);
@@ -406,6 +431,45 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
               className="rounded-md bg-stone-800 px-4 py-1.5 text-sm font-medium text-white hover:bg-stone-900 disabled:opacity-50"
             >
               保存设置
+            </button>
+          </div>
+        </section>
+
+        <section className="mt-5 rounded-xl border border-stone-200 bg-white p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-medium text-stone-700">笔画复习</h2>
+              <p className="mt-1 text-xs text-stone-500">
+                错题本的「复习笔画」页：翻到每个词用系统语音读一遍，孩子照读音默写
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-center justify-between gap-4 border-t border-stone-100 pt-4">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-stone-600">自动朗读</p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-stone-400">
+                默认关闭。开启后进入笔画复习会翻一个词读一个词（需系统装有中文语音）；
+                复习页顶部的「自动朗读」按钮也是这同一个开关
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!savedValue?.strokeAutoSpeak}
+              onClick={() => void toggleStrokeAutoSpeak()}
+              disabled={busy || !savedValue}
+              className={
+                "relative h-5 w-9 shrink-0 rounded-full transition disabled:opacity-50 " +
+                (savedValue?.strokeAutoSpeak ? "bg-amber-600" : "bg-stone-300")
+              }
+            >
+              <span
+                className={
+                  "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all " +
+                  (savedValue?.strokeAutoSpeak ? "left-4" : "left-0.5")
+                }
+              />
             </button>
           </div>
         </section>

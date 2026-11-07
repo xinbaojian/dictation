@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import StrokeWord, { type StrokeWordHandle } from "../components/StrokeWord";
 import { Toast, useNotice } from "../components/Toast";
 import { api, errorMessage } from "../lib/ipc";
-import type { Mistake } from "../types";
+import type { Mistake, Settings } from "../types";
 
 interface StrokeReviewProps {
   groupId: number | null;
@@ -29,16 +29,8 @@ function boxSize(count: number): number {
   return Math.max(96, Math.min(132, fit));
 }
 
-/** 「自动朗读」偏好存 localStorage：默认开，关掉的孩子可能正在专心写字 */
-const AUTO_SPEAK_KEY = "strokeReview.autoSpeak";
-
-function readAutoSpeak(): boolean {
-  try {
-    return localStorage.getItem(AUTO_SPEAK_KEY) !== "0";
-  } catch {
-    return true;
-  }
-}
+/** 「自动朗读」偏好存后端 settings（strokeAutoSpeak，默认关，本机偏好）：
+ *  复习页内开关与设置页开关读写同一个值 */
 
 /** 错题本的「笔画复习」：逐词展示笔顺动画，可先遮住让孩子自己写再对照 */
 export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeReviewProps) {
@@ -48,8 +40,13 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
   const [revealed, setRevealed] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  // 翻到每个词自动用系统语音读一遍（「先自己写」遮笔画不遮读音，孩子照读音写）
-  const [autoSpeak, setAutoSpeak] = useState(readAutoSpeak);
+  // 翻到每个词自动用系统语音读一遍（「先自己写」遮笔画不遮读音，孩子照读音写）。
+  // 默认关；设置加载完成后以 strokeAutoSpeak 为准
+  const [autoSpeak, setAutoSpeak] = useState(false);
+  // 最近一次「已保存」的完整设置：页内开关切换时要整体写回，只改 strokeAutoSpeak 一个字段
+  const settingsRef = useRef<Settings | null>(null);
+  // 挡住在途保存期间连点：两次并发写会以后到的为准，按钮状态却先变了
+  const savingPreference = useRef(false);
   const wordRef = useRef<StrokeWordHandle>(null);
   // 挡住连点：一次翻两词会让孩子莫名其妙漏掉一个
   const navAt = useRef(0);
@@ -58,8 +55,10 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
   useEffect(() => {
     (async () => {
       try {
-        const list = await api.listMistakes(groupId);
+        const [list, cfg] = await Promise.all([api.listMistakes(groupId), api.getSettings()]);
         setWords(list);
+        settingsRef.current = cfg;
+        setAutoSpeak(cfg.strokeAutoSpeak);
         // 错题本里点了某个词进来：直接落到那个词。找不到（比如刚被移出错题本）就从头开始
         const at = wordId == null ? 0 : list.findIndex((w) => w.id === wordId);
         setIndex(at > 0 ? at : 0);
@@ -93,14 +92,26 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
     else void api.stopSpeak().catch(() => {});
   }, [word, autoSpeak, speak]);
 
-  // 偏好落盘；退出复习页停掉可能在播的朗读
-  useEffect(() => {
+  /** 页内开关：立即生效（开启就读当前词），成功后写回后端设置，失败回滚 */
+  const toggleAutoSpeak = useCallback(async () => {
+    const base = settingsRef.current;
+    if (!base || savingPreference.current) return;
+    savingPreference.current = true;
+    const next = !base.strokeAutoSpeak;
+    setAutoSpeak(next);
     try {
-      localStorage.setItem(AUTO_SPEAK_KEY, autoSpeak ? "1" : "0");
-    } catch {
-      // localStorage 不可用就只当本次会话的偏好
+      const saved = await api.saveSettings({ ...base, strokeAutoSpeak: next });
+      settingsRef.current = saved;
+      setAutoSpeak(saved.strokeAutoSpeak);
+    } catch (e) {
+      setAutoSpeak(!next);
+      notify("error", "自动朗读偏好保存失败：" + errorMessage(e));
+    } finally {
+      savingPreference.current = false;
     }
-  }, [autoSpeak]);
+  }, [notify]);
+
+  // 退出复习页停掉可能在播的朗读
   useEffect(() => () => void api.stopSpeak().catch(() => {}), []);
   // 词表是按行/逗号切分的，一句话没有标点也会变成一个很长的「词」；
   // boxSize 会随字数缩格子，再长的靠下面的滚动兜底
@@ -212,8 +223,8 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setAutoSpeak((v) => !v)}
-            title="翻到每个词时用系统语音自动读一遍（需系统装有中文语音）"
+            onClick={() => void toggleAutoSpeak()}
+            title="翻到每个词时用系统语音自动读一遍（需系统装有中文语音）；与设置页共用同一开关"
             className={
               "rounded-md border px-3 py-1.5 text-sm transition " +
               (autoSpeak
