@@ -97,6 +97,12 @@ pub fn run() {
             commands::sync::sync_pull,
             commands::sync::sync_discard_pending,
             commands::sync::sync_repair_state,
+            commands::ai::get_ai_config,
+            commands::ai::save_ai_config,
+            commands::ai::clear_ai_config,
+            commands::ai::test_ai_config,
+            commands::ai::get_word_card,
+            commands::ai::generate_word_card,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");

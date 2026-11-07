@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod library;
 pub mod math;
 pub mod print;
