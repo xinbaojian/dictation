@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AiCard,
+  AiConfigView,
   BackupInfo,
   Group,
   GroupDeleteResult,
@@ -110,6 +112,15 @@ export const api = {
   speakText: (text: string) => invoke<void>("speak_text", { text }),
   /** 停止当前朗读（翻词 / 退出复习页时调用） */
   stopSpeak: () => invoke<void>("stop_speak"),
+
+  // AI 讲解卡（默认关闭；配置了 .ai-config.json 才会联网）
+  getAiConfig: () => invoke<AiConfigView>("get_ai_config"),
+  saveAiConfig: (baseUrl: string, model: string, apiKey: string | null) =>
+    invoke<AiConfigView>("save_ai_config", { baseUrl, model, apiKey }),
+  clearAiConfig: () => invoke<AiConfigView>("clear_ai_config"),
+  testAiConfig: () => invoke<string>("test_ai_config"),
+  getWordCard: (wordId: number) => invoke<AiCard | null>("get_word_card", { wordId }),
+  generateWordCard: (wordId: number) => invoke<AiCard>("generate_word_card", { wordId }),
 
   // 跨设备同步：默认完全离线，只有配置了自有 MySQL 才会有网络请求
   syncStatus: () => invoke<SyncStatus>("sync_status"),

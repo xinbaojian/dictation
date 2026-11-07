@@ -117,6 +117,36 @@ export interface Settings {
   strokeAutoSpeak: boolean;
 }
 
+/** AI 讲解卡内容（对齐 Rust domain::ai_card::CardContent） */
+export interface CardContent {
+  /** 部件拆解（如 碧 → 王/白/石），0~4 个 */
+  decomposition: string[];
+  /** 记忆口诀，孩子念的顺口溜 */
+  mnemonic: string;
+  /** 易混字辨析（给家长看的内容） */
+  confusables: { char: string; hint: string }[];
+  /** 例句 1~2 条，每条包含词语本身 */
+  sentences: string[];
+}
+
+export interface AiCard {
+  id: number;
+  wordId: number;
+  kind: string;
+  content: CardContent;
+  model: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** AI 配置的掩码视图：key 原值永不回传 */
+export interface AiConfigView {
+  configured: boolean;
+  baseUrl: string;
+  model: string;
+  keyMask: string;
+}
+
 /** 抽词偏好：开一场默写时勾选，全不选 = 纯随机 */
 export interface SampleOptions {
   /** 连字：下一个词优先和上一个词有相同的字 */
