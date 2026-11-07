@@ -48,7 +48,7 @@ src-tauri/src/db/       连接 + WAL + 迁移 + 启动时 pending 快照替换
 src-tauri/src/ai/       AI 讲解卡客户端与配置（ADR-20，默认关闭）
 src-tauri/src/domain/   text.rs 粘贴切分、sampler.rs 抽题（纯函数，带单测）
 src-tauri/src/repo/     groups / words / sessions / word_progress / settings / backup / sync
-src-tauri/src/commands/ library.rs（11）/ quiz.rs（14）/ system.rs（9）/ sync.rs（7）/ ai.rs（6）（薄封装，共 47 个命令）
+src-tauri/src/commands/ library.rs（11）/ quiz.rs（14）/ system.rs（11）/ sync.rs（7）/ ai.rs（6）/ math.rs（1）/ print.rs（1）（薄封装，共 51 个命令）
 src-tauri/src/speech/   系统离线 TTS：trait Speaker + macOS say / Windows SAPI / Linux spd-say（见 ADR-19）
 src/pages/              Pick / Quiz / Review / Mistakes / StrokeReview / History / Settings / Wordbook / PrintSheet；math/（口算：MathSheet + example + math-sheet.css）
 src/tools/registry.ts   工具注册表：顶栏一级菜单（TOOLS）与各工具二级菜单（NAV_BY_TOOL）、Route 联合类型
