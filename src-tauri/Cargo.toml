@@ -30,6 +30,9 @@ tauri-plugin-single-instance = "2"
 # 自有 MySQL 快照同步（默认不启用；只有配置了连接信息才联网）
 mysql = "28.0.4"
 sha2 = "0.10"
+# AI 讲解卡：OpenAI 兼容对话（默认不启用；只有配置了 .ai-config.json 才联网）。
+# rustls 避免跨平台拉系统 OpenSSL
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
 # 朗读（SAPI ISpVoice）只在 Windows 上编译
 [target.'cfg(windows)'.dependencies]
