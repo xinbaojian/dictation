@@ -111,7 +111,7 @@ mod tests {
             api_key: std::env::var("AI_KEY").unwrap(),
             model: std::env::var("AI_MODEL").unwrap(),
         };
-        let ctx = WordContext { text: "碧绿".into(), wrong_chars: vec![0], wrong_count: 3 };
+        let ctx = WordContext { text: "碧绿".into(), wrong_chars: vec![0], wrong_count: 3, whole_word_wrong: 0 };
         let (content, _) = generate_content(&cfg, &ctx).unwrap();
         assert!(!content.mnemonic.is_empty());
         assert!(content.sentences.iter().all(|s| s.contains("碧绿")));

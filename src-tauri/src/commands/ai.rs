@@ -93,6 +93,7 @@ pub async fn generate_word_card(
             text: word.text,
             wrong_chars: marks.wrong_chars,
             wrong_count: marks.wrong_count,
+            whole_word_wrong: marks.whole_word_wrong,
         }
     };
     let dir = state.data_dir.clone();

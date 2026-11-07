@@ -26,6 +26,8 @@ pub struct WordContext {
     pub text: String,
     pub wrong_chars: Vec<i64>,
     pub wrong_count: i64,
+    /// 整词算错（批改没标具体字）的次数：错字为空时它是唯一的强度信号
+    pub whole_word_wrong: i64,
 }
 
 /// OpenAI 兼容消息（ai/client.rs 消费）
@@ -49,7 +51,11 @@ const TERMS: [&str; 7] = ["形近字", "音近字", "部首", "音序", "笔顺"
 pub fn build_messages(ctx: &WordContext) -> Vec<ChatMessage> {
     let chars: Vec<char> = ctx.text.chars().collect();
     let wrong = if ctx.wrong_chars.is_empty() {
-        "整词写错，没有标具体字".to_string()
+        if ctx.whole_word_wrong > 0 {
+            format!("整词写错了 {} 次，没有标具体字", ctx.whole_word_wrong)
+        } else {
+            "整词写错，没有标具体字".to_string()
+        }
     } else {
         let names = ctx
             .wrong_chars
@@ -195,7 +201,7 @@ mod tests {
     use super::*;
 
     fn ctx() -> WordContext {
-        WordContext { text: "碧绿".into(), wrong_chars: vec![0], wrong_count: 3 }
+        WordContext { text: "碧绿".into(), wrong_chars: vec![0], wrong_count: 3, whole_word_wrong: 0 }
     }
 
     const GOOD: &str = r#"{"decomposition":["王","白","石"],"mnemonic":"老王爷坐在白石头上钓鱼","confusables":[{"char":"壁","hint":"下面是土，和墙有关"}],"sentences":["湖水碧绿得像一块玉石。"]}"#;
@@ -285,8 +291,18 @@ mod tests {
 
     #[test]
     fn build_messages_without_marks_says_whole_word() {
-        let c = WordContext { text: "春天".into(), wrong_chars: vec![], wrong_count: 1 };
+        let c = WordContext { text: "春天".into(), wrong_chars: vec![], wrong_count: 1, whole_word_wrong: 0 };
         let msgs = build_messages(&c);
         assert!(msgs[1].content.contains("整词写错"));
+    }
+
+    #[test]
+    fn build_messages_whole_word_count_feeds_prompt() {
+        let c = WordContext { text: "春天".into(), wrong_chars: vec![], wrong_count: 4, whole_word_wrong: 4 };
+        let msgs = build_messages(&c);
+        assert!(
+            msgs[1].content.contains("整词写错了 4 次"),
+            "整词错次数要进入上下文，让模型知道强度"
+        );
     }
 }
