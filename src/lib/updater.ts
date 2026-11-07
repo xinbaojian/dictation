@@ -85,8 +85,10 @@ export function useAutoUpdate(): UpdaterController {
   }, []);
 
   const checkForUpdate = useCallback(async (silent = false) => {
-    if (import.meta.env.DEV) {
-      setState((s) => ({ ...s, phase: "dev", message: "开发模式不检查更新" }));
+    // 开发模式只挡「启动自动检查」；手动点「检查更新」是只读查询 latest.json，无害且有用。
+    // 真正危险的是在 dev 里安装更新包，那一步在 installUpdate 里单独挡。
+    if (import.meta.env.DEV && silent) {
+      setState((s) => ({ ...s, phase: "dev", message: "开发模式不自动检查更新" }));
       return;
     }
     if (busyRef.current) return;
@@ -161,6 +163,15 @@ export function useAutoUpdate(): UpdaterController {
   }, [checkForUpdate]);
 
   const installUpdate = useCallback(async () => {
+    // dev 二进制不在 .app/NSIS 包里，安装更新只会破坏开发环境——检查可以，安装绝不
+    if (import.meta.env.DEV) {
+      setState((s) => ({
+        ...s,
+        phase: "error",
+        message: "开发模式不能安装更新，请用打包后的应用升级",
+      }));
+      return;
+    }
     const update = updateRef.current;
     if (!update || busyRef.current) return;
     busyRef.current = true;

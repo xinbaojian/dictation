@@ -91,7 +91,7 @@ make release v0.2.2
   老版本存量的设置 JSON 没有该字段，靠 `SettingsDto` 结构体级 `serde(default)` + 手写 `Default`（true）补齐，有单测兜底。
 - `Update` 对象持有 Rust 侧资源，用 ref 保活，重新检查前先 `close()`；`busyRef` 挡住连点。
 - 「忽略此版本」写 `localStorage["dictation.skipUpdateVersion"]`，只隐藏横幅，设置页仍可更新；手动检查会重新展示。
-- 开发模式（`import.meta.env.DEV`）不检查，避免开发时误装更新包。
+- 开发模式（`import.meta.env.DEV`）：启动自动检查不运行、`installUpdate` 直接拒绝（dev 二进制不在安装包里，安装只会破坏开发环境）；但**手动「检查更新」可用**（只读查询 latest.json，无害）。
 - Windows 调 `downloadAndInstall` 后安装器会退出应用；macOS / Linux 需重启，`ready` 状态给「立即重启」按钮，
   走 `commands/system.rs::restart_app`（`AppHandle::restart()` 会立刻结束进程，前端 invoke 报错属正常，已 catch）。
 

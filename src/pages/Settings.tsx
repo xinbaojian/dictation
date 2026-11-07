@@ -798,7 +798,7 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
             </div>
             <button
               onClick={() => void updater.checkForUpdate()}
-              disabled={updateBusy || u.phase === "dev"}
+              disabled={updateBusy}
               className="shrink-0 rounded-md border border-stone-200 px-3 py-1.5 text-xs text-stone-600 hover:bg-stone-50 disabled:opacity-50"
             >
               {u.phase === "checking" ? "检查中…" : "检查更新"}
@@ -832,12 +832,9 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
             </button>
           </div>
 
-          {u.phase === "dev" && (
+          {import.meta.env.DEV && (
             <p className="mt-3 text-xs text-stone-500">
-              开发模式不检查更新；
-              {savedValue?.autoCheckUpdates
-                ? "打包后的程序每次启动会自动检查一次。"
-                : "启动自动检查已关闭，打包后也只能手动检查。"}
+              开发模式：可手动检查更新，但启动自动检查不运行、也不能在此环境安装升级。
             </p>
           )}
           {u.phase === "idle" && (
