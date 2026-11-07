@@ -32,6 +32,7 @@ tags: [index]
 | [roadmap.md](./roadmap.md) | 已完成里程碑与 V2 候选 | 规划下一步 |
 | [glossary.md](./glossary.md) | 术语表（分组/词条/会话/出本…） | 读代码前对齐概念 |
 | [sync.md](./sync.md) | 自有 MySQL 整库快照同步、CAS 冲突、pending 启动替换 | 配置或排查多机同步 |
+| [tts-local-models.md](./tts-local-models.md) | 本地开源 TTS 语音包调研（sherpa-onnx，暂缓开发） | 规划离线高音质朗读时 |
 
 ## 当前状态
 
