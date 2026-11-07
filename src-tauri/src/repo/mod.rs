@@ -1,3 +1,4 @@
+pub mod ai_cards;
 pub mod backup;
 pub mod groups;
 pub mod sessions;
