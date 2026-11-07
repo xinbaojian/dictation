@@ -223,6 +223,25 @@ pub fn open_memory() -> Connection {
     conn
 }
 
+/// 仅测试可见：把库只迁移到指定版本（可以比 latest 旧）。
+/// 同步的兼容逻辑（内容哈希按库自身 schema 自适应、迁移后重定位同步基准）必须用
+/// 「真·旧 schema」才测得出来——只把 user_version 数字改小、schema 仍是最新版，
+/// 是测不出回归的（见 repo/sync.rs 的旧快照测试）。生产路径永远由 `init` 迁到最新版。
+#[cfg(test)]
+pub(crate) fn migrate_to(conn: &Connection, target: i64) -> AppResult<()> {
+    // 与生产 migrate 同样的「只跑比 current 新的」判定，只是多一个 target 上限：
+    // 已在 uv=5 的库迁到 6 时只补 0006，不会把 0001-0005 重跑一遍
+    let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    for (version, sql) in MIGRATIONS {
+        if *version > target || *version <= current {
+            continue;
+        }
+        conn.execute_batch(sql)?;
+        conn.execute_batch(&format!("PRAGMA user_version = {version};"))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

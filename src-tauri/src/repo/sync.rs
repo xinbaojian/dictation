@@ -259,18 +259,37 @@ fn load_state_with_device(dir: &Path) -> AppResult<SyncState> {
 /// 但**新增业务表必须同步加进 `TABLES`**，且必须是 `INTEGER PRIMARY KEY`（rowid 稳定）——
 /// `VACUUM INTO` 会重排没有 INTEGER PRIMARY KEY 的表的 rowid，那样快照内哈希就与元数据对不上。刻意排除 `_sync_meta`（同步元数据）
 /// 与 `settings`（界面偏好），因此同一份业务数据每次结果都相同。
+/// 哈希按**被算库自身 schema** 自适应：`TABLES` 里有、但被算库（旧版本程序建的库 /
+/// 云端旧快照）还没有的表，整张表连表名段一起从哈希输入中排除——这样新版对旧 schema
+/// 算出的哈希与旧程序逐字节一致，旧快照才能通过 `validate_snapshot`，
+/// 迁移前的 `hash_before` 才能命中旧同步基准（`rebase_baseline_after_migration` 才会生效）。
 pub fn content_hash(conn: &Connection) -> AppResult<String> {
     // 刻意**不**把 `PRAGMA user_version` 混进来：升级程序跑迁移只改版本号、业务数据没变，
     // 混进来会让每次升级后的第一次拉取都被判成「本机有改动」而弹覆盖确认。
     // 版本兼容性由 `validate_snapshot` 的 `uv > latest` 检查单独负责。
     let mut hasher = Sha256::new();
     for table in TABLES {
+        // 缺失的表整张（含「table:...;」段）跳过，绝不能只把报错吞成 0 行：
+        // 表名段混进输入后算出的哈希就与旧程序的口径不等，旧快照照样永远过不了校验
+        if !table_exists(conn, table)? {
+            continue;
+        }
         hasher.update(table.as_bytes());
         hasher.update(b":");
         hash_table(&mut hasher, conn, table)?;
         hasher.update(b";");
     }
     Ok(hex(&hasher.finalize()))
+}
+
+/// 被算库里有没有这张表（查 `sqlite_master`）。表名来自常量 `TABLES`，不是用户输入，无注入风险。
+fn table_exists(conn: &Connection, table: &str) -> AppResult<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        params![table],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
 }
 
 fn hash_table(hasher: &mut Sha256, conn: &Connection, table: &str) -> AppResult<()> {
@@ -1613,6 +1632,166 @@ mod tests {
             content_hash(&conn).unwrap(),
             "加讲解卡后哈希必须变化"
         );
+    }
+
+    /// 旧版本程序（TABLES 还只有 4 张表、user_version≤5）算内容哈希的口径。
+    /// 行列编码直接复用生产 `hash_table`，只固定旧的表清单：新版程序对旧 schema 库
+    /// 算出的哈希必须与它**逐字节一致**，否则旧快照永远过不了 validate_snapshot。
+    fn legacy_four_table_hash(conn: &Connection) -> String {
+        let mut hasher = Sha256::new();
+        for table in ["groups", "words", "sessions", "session_items"] {
+            hasher.update(table.as_bytes());
+            hasher.update(b":");
+            hash_table(&mut hasher, conn, table).unwrap();
+            hasher.update(b";");
+        }
+        hex(&hasher.finalize())
+    }
+
+    /// 造一台「旧版本程序」的库：迁移只跑到 0005，库里绝无 ai_cards 表。
+    fn old_schema_db(dir: &Path, tag: &str) -> Connection {
+        let path = dir.join(format!("{tag}.db"));
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")
+            .unwrap();
+        db::migrate_to(&conn, 5).unwrap();
+        conn
+    }
+
+    /// 真·旧 schema 快照（迁移只跑到 0005、绝无 ai_cards 表、元数据按旧 4 表口径写）：
+    /// 已同步用户升级 / 换机后，新版程序第一次拉取遇到的就是这种文件。
+    /// 内容哈希必须按被算库自身 schema 自适应（缺失的表整张连表名段一起跳过），
+    /// validate_snapshot 才能通过、「旧版本快照需确认」分支才可达；
+    /// 确认落地后再启动，迁移把库补到最新 schema 且业务数据完好。
+    #[test]
+    fn old_schema_snapshot_validates_confirms_and_migrates() {
+        let dir = temp_dir("old-snap");
+        // 1. 旧版本程序的库 + 少量业务数据
+        let old = old_schema_db(&dir, "old-source");
+        let g = groups::create(&old, None, "1", "第一单元").unwrap();
+        words::add(&old, g.id, "春天", None).unwrap();
+
+        // 2. 新版对旧 schema 库算的哈希必须与旧程序的 4 表口径逐字节一致
+        let legacy_hash = legacy_four_table_hash(&old);
+        assert_eq!(
+            content_hash(&old).unwrap(),
+            legacy_hash,
+            "对旧 schema 库必须整表（含表名段）跳过缺失的表，与旧程序口径一致"
+        );
+
+        // 3. 按旧程序推快照的真实样子造云端文件：VACUUM INTO + 旧口径元数据
+        let snap_path = dir.join("old-remote.db");
+        let escaped = snap_path.to_string_lossy().replace('\'', "''");
+        old.execute_batch(&format!("VACUUM INTO '{escaped}';"))
+            .unwrap();
+        {
+            let snap = Connection::open(&snap_path).unwrap();
+            snap.execute_batch(
+                "CREATE TABLE IF NOT EXISTS _sync_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+            )
+            .unwrap();
+            let m = SnapshotMeta {
+                user_version: 5,
+                content_hash: legacy_hash.clone(),
+                ..meta(String::new())
+            };
+            snap.execute(
+                "INSERT OR REPLACE INTO _sync_meta (key, value) VALUES (?1, ?2)",
+                params![META_KEY, serde_json::to_string(&m).unwrap()],
+            )
+            .unwrap();
+        }
+
+        // 4. 新版程序校验这份快照必须通过（修复前：no such table: ai_cards）
+        let validated = validate_snapshot(&snap_path, crate::db::latest_user_version()).unwrap();
+        assert_eq!(validated.user_version, 5);
+        assert_eq!(validated.content_hash, legacy_hash);
+
+        // 5. 拉取路径：命中「旧版本快照需确认」分支，确认前不写 pending
+        save_test_creds(&dir);
+        let remote = RemoteSnapshot {
+            version: 4,
+            data: fs::read(&snap_path).unwrap(),
+            content_hash: legacy_hash.clone(),
+            app_version: "0.2.1".into(),
+            user_version: 5,
+        };
+        let store = FakeStore::new(remote);
+        let local = db::open_memory(); // 换机场景：新机的空库
+        let plan = prepare_pull(&local, &dir).unwrap();
+        let out = perform_pull_with(&store, plan, false).unwrap();
+        assert_eq!(out.kind, "conflict", "旧版本快照必须先确认");
+        assert!(out.needs_confirm);
+        assert!(!pending_path(&dir).exists());
+        let plan = prepare_pull(&local, &dir).unwrap();
+        assert_eq!(perform_pull_with(&store, plan, true).unwrap().kind, "pending");
+
+        // 6. 重启落地：库被换成旧快照，再模拟下次启动的迁移 → 最新 schema + 数据完好
+        let db_path = dir.join("dictation.db");
+        assert!(apply_pending(&dir, &db_path).unwrap());
+        let applied = Connection::open(&db_path).unwrap();
+        db::migrate_to(&applied, crate::db::latest_user_version())
+            .unwrap();
+        let uv: i64 = applied
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            uv,
+            crate::db::latest_user_version(),
+            "落地后必须迁移到最新 schema"
+        );
+        let words_n: i64 = applied
+            .query_row("SELECT COUNT(*) FROM words", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(words_n, 1, "业务数据完好");
+        let has_ai_cards: i64 = applied
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ai_cards'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_ai_cards, 1, "迁移 0006 必须补上 ai_cards 表");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 已同步用户升级程序：迁移前的 hash_before 必须在旧 schema 上算得出来（旧 4 表口径），
+    /// `rebase_baseline_after_migration` 才能把基准挪到迁移后的哈希——否则升级后第一次
+    /// 拉取会被误判「本机有改动」而弹覆盖确认。除 AppHandle 外复刻 `db::init` 的顺序。
+    #[test]
+    fn rebase_baseline_updates_when_migrating_old_synced_library() {
+        let dir = temp_dir("rebase");
+        // 旧库 + 业务数据：上次同步的基准是旧程序写下的旧 4 表口径哈希
+        let conn = old_schema_db(&dir, "old-local");
+        let g = groups::create(&conn, None, "1", "第一单元").unwrap();
+        words::add(&conn, g.id, "春天", None).unwrap();
+        let hash_before = legacy_four_table_hash(&conn);
+        save_state(
+            &dir,
+            &SyncState {
+                device_id: "dev-old".into(),
+                last_synced_hash: hash_before.clone(),
+                ..SyncState::default()
+            },
+        )
+        .unwrap();
+
+        // db::init 的顺序：迁移前对旧库算 hash_before
+        //（修复前这里 no such table: ai_cards → .ok() 得 None → rebase 根本不执行）
+        let before = content_hash(&conn).unwrap();
+        assert_eq!(before, hash_before, "迁移前的哈希必须命中旧同步基准");
+        db::migrate_to(&conn, crate::db::latest_user_version())
+            .unwrap();
+        rebase_baseline_after_migration(&dir, &before, &conn);
+
+        let after = content_hash(&conn).unwrap();
+        assert_ne!(after, before, "迁移补上 ai_cards 表后哈希必须变化");
+        assert_eq!(
+            load_state(&dir).unwrap().last_synced_hash,
+            after,
+            "rebase 必须把基准挪到迁移后的哈希，首次拉取才不会误判本机有改动"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
