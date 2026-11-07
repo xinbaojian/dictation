@@ -99,7 +99,7 @@ struct Credentials {
 /// 私密文件：Unix 下强制 600。密码不进 `settings` 表，也永不回传前端。
 /// 同目录「临时文件 → fsync → rename」原子落盘：状态 / 凭据 / 待提交状态都是小 JSON，
 /// 直接 `File::create` 时若中途崩溃会留下半截 JSON，正好掉进「状态文件损坏」的坑。
-fn write_private(path: &Path, bytes: &[u8]) -> AppResult<()> {
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> AppResult<()> {
     let tmp = PathBuf::from(format!("{}.tmp-{}", path.display(), rand::random::<u32>()));
     let result = (|| -> AppResult<()> {
         let mut f = fs::File::create(&tmp)?;
