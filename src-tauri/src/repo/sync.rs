@@ -27,7 +27,9 @@ const META_KEY: &str = "meta";
 /// 参与内容哈希的业务表。`settings` 刻意排除：它只存界面偏好（字号 / 遮罩秒数），
 /// 两台机器字号不同不该被算成「本机内容有改动」，否则每次拉取都会弹覆盖确认。
 /// 快照本身仍然把 settings 表一起带走，只是它不参与差异判定。
-const TABLES: [&str; 4] = ["groups", "words", "sessions", "session_items"];
+/// `ai_cards`（迁移 0006 的讲解卡缓存）必须在这里：只生成/重新生成了卡片、词没变时，
+/// 哈希也得变，否则推送会被判成「内容没变」而跳过上传，另一台机器永远拿不到缓存卡。
+const TABLES: [&str; 5] = ["groups", "words", "sessions", "session_items", "ai_cards"];
 
 fn unix_secs() -> u64 {
     SystemTime::now()
@@ -1563,7 +1565,8 @@ mod tests {
             device_id: "dev-a".into(),
             device_name: "书房".into(),
             app_version: "0.2.1".into(),
-            user_version: 5,
+            // 夹具跟随迁移版本：写死旧版本号会让 prepare_pull 的「旧快照要确认」分支误命中
+            user_version: crate::db::latest_user_version(),
             exported_at: "2026-11-05T00:00:00Z".into(),
             content_hash: hash,
         }
@@ -1581,6 +1584,37 @@ mod tests {
         assert_ne!(a, b, "加词后哈希必须变化");
     }
 
+    /// 讲解卡（迁移 0006）必须参与内容哈希：只生成卡片、词一个没动时哈希也要变，
+    /// 否则推送会被判成「内容没变」而跳过上传，另一台机器永远拿不到缓存卡。
+    #[test]
+    fn content_hash_changes_when_ai_card_is_added() {
+        let conn = db::open_memory();
+        // 先建 group / word 满足 ai_cards.word_id 的外键
+        let g = groups::create(&conn, None, "1", "第一单元").unwrap();
+        let w = words::add(&conn, g.id, "碧绿", None).unwrap();
+        let before = content_hash(&conn).unwrap();
+
+        crate::repo::ai_cards::upsert(
+            &conn,
+            w.id,
+            "mnemonic",
+            &crate::domain::ai_card::CardContent {
+                decomposition: vec!["王".into(), "白".into(), "石".into()],
+                mnemonic: "老王爷坐在白石头上".into(),
+                confusables: vec![],
+                sentences: vec!["湖水碧绿得像一块玉石。".into()],
+            },
+            "test-model",
+        )
+        .unwrap();
+
+        assert_ne!(
+            before,
+            content_hash(&conn).unwrap(),
+            "加讲解卡后哈希必须变化"
+        );
+    }
+
     #[test]
     fn snapshot_roundtrip_and_validation() {
         let dir = temp_dir("snapshot");
@@ -1591,7 +1625,7 @@ mod tests {
 
         let path = create_snapshot(&conn, &dir, &meta(hash.clone())).unwrap();
         assert!(path.exists());
-        let m = validate_snapshot(&path, 5).unwrap();
+        let m = validate_snapshot(&path, crate::db::latest_user_version()).unwrap();
         assert_eq!(m.content_hash, hash);
         assert_eq!(m.device_name, "书房");
 
@@ -1753,7 +1787,7 @@ mod tests {
             content_hash(&applied).unwrap()
         );
         assert!(
-            validate_snapshot(&second, 5).is_ok(),
+            validate_snapshot(&second, crate::db::latest_user_version()).is_ok(),
             "_sync_meta 不能算进业务哈希"
         );
         let _ = fs::remove_dir_all(&dir);
@@ -2410,7 +2444,7 @@ mod tests {
 
     /// 造一份「云端已有数据」的快照，并返回可直接塞进 FakeStore 的 RemoteSnapshot。
     fn fake_remote(tag: &str) -> (RemoteSnapshot, String) {
-        fake_remote_with_uv(tag, 5)
+        fake_remote_with_uv(tag, crate::db::latest_user_version())
     }
 
     /// 造一份「云端快照」，`uv` 是快照元数据里声称的数据版本
@@ -2437,7 +2471,7 @@ mod tests {
                 data,
                 content_hash: hash.clone(),
                 app_version: "0.2.1".into(),
-                user_version: 5,
+                user_version: crate::db::latest_user_version(),
             },
             hash,
         )
@@ -2516,7 +2550,7 @@ mod tests {
             data: fs::read(&snap).unwrap(),
             content_hash: hash.clone(),
             app_version: "0.2.1".into(),
-            user_version: 5,
+            user_version: crate::db::latest_user_version(),
         };
         let _ = fs::remove_file(&snap);
         let store = FakeStore::new(remote);
@@ -2960,7 +2994,9 @@ mod tests {
             let s = Connection::open(&snap).unwrap();
             s.execute("UPDATE words SET text = '夏天'", []).unwrap();
         }
-        let err = validate_snapshot(&snap, 5).unwrap_err().to_string();
+        let err = validate_snapshot(&snap, crate::db::latest_user_version())
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("不一致"), "{err}");
         let _ = fs::remove_dir_all(&dir);
     }
@@ -3090,7 +3126,9 @@ mod tests {
             )
             .unwrap();
         }
-        let err = validate_snapshot(&snap, 5).unwrap_err().to_string();
+        let err = validate_snapshot(&snap, crate::db::latest_user_version())
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("请先升级"), "应命中版本检查：{err}");
         let _ = fs::remove_dir_all(&dir);
     }

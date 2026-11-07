@@ -1,7 +1,7 @@
 use crate::domain::ai_card::CardContent;
 use crate::error::{AppError, AppResult};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
