@@ -1,6 +1,6 @@
 ---
 title: 架构
-updated: 2026-11-05
+updated: 2026-11-07
 tags: [architecture, rust, tauri]
 related: [data-model.md, frontend.md, decisions.md, sync.md]
 ---
@@ -13,7 +13,8 @@ related: [data-model.md, frontend.md, decisions.md, sync.md]
 React 页面 ──invoke──> commands/*.rs ──> repo/*.rs ──> rusqlite ──> SQLite
                             │                  │
                             │                  └──> 自有 MySQL（仅快照同步，可选）
-                            └──> domain/*.rs（纯逻辑：切分、抽题、状态机）
+                            ├──> domain/*.rs（纯逻辑：切分、抽题、状态机）
+                            └──> ai/  # OpenAI 兼容客户端与配置（ADR-20）
 ```
 
 - `domain/`：无 I/O、不依赖 Tauri，输入输出都是普通结构，全部可单测（`math.rs` 口算出题引擎：三数两步逆推，同 seed 同卷）
@@ -41,7 +42,7 @@ React 页面 ──invoke──> commands/*.rs ──> repo/*.rs ──> rusqlit
 
 - 命令参数/返回值用 `#[serde(rename_all = "camelCase")]`，JS 侧 camelCase，Rust 侧 snake_case，由 Tauri 自动转换
 - 返回类型必须是可 Serialize 的 DTO，禁止把 `rusqlite::Row` 之类的内部类型漏出去
-- 共 41 个命令，分四组：`commands/library.rs`（词表 11）、`commands/quiz.rs`（默写/错题 14）、`commands/system.rs`（设置/备份 9）、`commands/sync.rs`（跨设备同步 7）
+- 共 47 个命令，分五组：`commands/library.rs`（词表 11）、`commands/quiz.rs`（默写/错题 14）、`commands/system.rs`（设置/备份 9）、`commands/sync.rs`（跨设备同步 7）、`commands/ai.rs`（AI 讲解 6，默认关闭）
 
 ## 数据库连接约定
 

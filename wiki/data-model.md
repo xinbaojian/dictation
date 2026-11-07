@@ -1,6 +1,6 @@
 ---
 title: 数据模型
-updated: 2026-11-05
+updated: 2026-11-07
 tags: [database, sqlite]
 related: [quiz-flow.md, architecture.md]
 ---
@@ -70,6 +70,18 @@ related: [quiz-flow.md, architecture.md]
 ### settings
 
 键值表，V1 只有一行：`key='app'`，值是一段 JSON（`maskSeconds / streakToMaster / wordFontSize / autoCheckUpdates / strokeAutoSpeak`；连字已挪到每场默写的抽词偏好）。读时解析失败一律回落默认值；结构体带 `#[serde(default)]`，新增字段对旧库天然兼容（缺字段 = 默认值）。
+
+### ai_cards（AI 讲解卡缓存，0006）
+
+| 字段 | 说明 |
+|---|---|
+| `word_id` | 外键，`ON DELETE CASCADE`（删词连卡一起删） |
+| `kind` | 卡片类型，当前只有 `mnemonic`（巧记讲解） |
+| `content_json` | 校验通过后的卡片内容 JSON（积木/口诀/例句/辨析） |
+| `model` | 生成时用的模型名 |
+| `created_at` / `updated_at` | UTC 时间戳 |
+
+唯一索引 `UNIQUE(word_id, kind)`：按词缓存，生成一次离线复用。词文本被编辑时由 `repo/words.rs::update` 主动清卡（讲解针对旧字形，对齐 ADR-16 清手工错字的先例）。表内容随整库快照同步（ADR-17）：一台机器生成、两台可用。API Key 不入库（在数据目录 `.ai-config.json`，见 ADR-20）。
 
 ### _sync_meta（只在同步启用后出现）
 
