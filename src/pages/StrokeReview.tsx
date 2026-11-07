@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import StrokeWord, { type StrokeWordHandle } from "../components/StrokeWord";
+import MnemonicCard from "../components/MnemonicCard";
 import { Toast, useNotice } from "../components/Toast";
 import { api, errorMessage } from "../lib/ipc";
-import type { Mistake, Settings } from "../types";
+import type { AiCard, Mistake, Settings } from "../types";
 
 interface StrokeReviewProps {
   groupId: number | null;
@@ -43,6 +44,10 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
   // 翻到每个词自动用系统语音读一遍（「先自己写」遮笔画不遮读音，孩子照读音写）。
   // 默认关；设置加载完成后以 strokeAutoSpeak 为准
   const [autoSpeak, setAutoSpeak] = useState(false);
+  // AI 讲解卡：aiReady 决定「生成」按钮；card 可能来自同步快照（未配置 AI 也显示）
+  const [aiReady, setAiReady] = useState(false);
+  const [card, setCard] = useState<AiCard | null>(null);
+  const [generating, setGenerating] = useState(false);
   // 最近一次「已保存」的完整设置：页内开关切换时要整体写回，只改 strokeAutoSpeak 一个字段
   const settingsRef = useRef<Settings | null>(null);
   // 挡住在途保存期间连点：两次并发写会以后到的为准，按钮状态却先变了
@@ -55,10 +60,15 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
   useEffect(() => {
     (async () => {
       try {
-        const [list, cfg] = await Promise.all([api.listMistakes(groupId), api.getSettings()]);
+        const [list, cfg, aiCfg] = await Promise.all([
+          api.listMistakes(groupId),
+          api.getSettings(),
+          api.getAiConfig(),
+        ]);
         setWords(list);
         settingsRef.current = cfg;
         setAutoSpeak(cfg.strokeAutoSpeak);
+        setAiReady(aiCfg.configured);
         // 错题本里点了某个词进来：直接落到那个词。找不到（比如刚被移出错题本）就从头开始
         const at = wordId == null ? 0 : list.findIndex((w) => w.id === wordId);
         setIndex(at > 0 ? at : 0);
@@ -75,15 +85,45 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
   const masked = hideMode && !revealed;
   const charCount = word ? [...word.text].length : 0;
 
-  const speak = useCallback(async () => {
-    if (!word) return;
+  const speakText = useCallback(
+    async (text: string) => {
+      try {
+        await api.speakText(text);
+      } catch (e) {
+        // 朗读失败不该打断复习，但也不能无声无息让家长误以为孩子听过音了
+        notify("error", "朗读失败：" + errorMessage(e));
+      }
+    },
+    [notify],
+  );
+
+  const speak = useCallback(() => {
+    if (word) void speakText(word.text);
+  }, [word, speakText]);
+
+  // 翻词时取当前词的缓存卡（本地查询，快）；失败静默——没有卡不该报错
+  useEffect(() => {
+    setCard(null);
+    const id = word?.id;
+    if (id == null) return;
+    void api
+      .getWordCard(id)
+      .then(setCard)
+      .catch(() => {});
+  }, [word?.id]);
+
+  // 生成讲解卡：busy 防连点；失败 toast，不掩盖已有的缓存卡
+  const generate = useCallback(async () => {
+    if (!word || generating) return;
+    setGenerating(true);
     try {
-      await api.speakText(word.text);
+      setCard(await api.generateWordCard(word.id));
     } catch (e) {
-      // 朗读失败不该打断复习，但也不能无声无息让家长误以为孩子听过音了
-      notify("error", "朗读失败：" + errorMessage(e));
+      notify("error", "讲解生成失败：" + errorMessage(e));
+    } finally {
+      setGenerating(false);
     }
-  }, [word, notify]);
+  }, [word, generating, notify]);
 
   // 换词 / 开关切换时朗读或停上一句。StrictMode 双跑无害：后端 speak 先停旧句再读，等于只读一次
   useEffect(() => {
@@ -281,6 +321,17 @@ export default function StrokeReview({ groupId, title, wordId, onBack }: StrokeR
               onPick={(i) => replay(i)}
             />
           </div>
+
+          <MnemonicCard
+            word={word}
+            card={card}
+            aiReady={aiReady}
+            masked={masked}
+            generating={generating}
+            autoSpeak={autoSpeak}
+            onGenerate={() => void generate()}
+            onSpeak={(t) => void speakText(t)}
+          />
 
           <p className="text-xs text-stone-400">
             {masked
