@@ -12,7 +12,9 @@ pub fn build_body(model: &str, messages: &[ChatMessage]) -> Value {
             .map(|m| json!({ "role": m.role, "content": m.content }))
             .collect::<Vec<_>>(),
         "temperature": 0.7,
-        "max_tokens": 500,
+        // 思考型模型（deepseek-flash 等）的推理与回答共用这份预算：实测一次推理就花
+        // 400+ tokens，500 会把 JSON 拦腰截断（finish_reason=length）。2048 让两边都够。
+        "max_tokens": 2048,
         "stream": false,
     })
 }
@@ -39,6 +41,12 @@ fn post_chat(cfg: &AiConfig, body: &Value) -> AppResult<String> {
         return Err(AppError::msg(format!("AI 服务返回错误（HTTP {status}）：{brief}")));
     }
     let v: Value = serde_json::from_str(&text)?;
+    // 截断的 JSON 必然解析失败；在 validate 报「不是合法的 JSON」之前先给准确的病因
+    if v["choices"][0]["finish_reason"].as_str() == Some("length") {
+        return Err(AppError::msg(
+            "AI 输出被长度上限截断（思考型模型的推理也占预算），请重试或换个模型",
+        ));
+    }
     v["choices"][0]["message"]["content"]
         .as_str()
         .map(str::to_string)
@@ -97,7 +105,7 @@ mod tests {
         assert_eq!(b["model"], "deepseek-chat");
         assert_eq!(b["messages"][0]["role"], "system");
         assert_eq!(b["messages"][1]["content"], "u");
-        assert_eq!(b["max_tokens"], 500);
+        assert_eq!(b["max_tokens"], 2048);
         assert_eq!(b["stream"], false);
     }
 
