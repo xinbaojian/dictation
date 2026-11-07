@@ -254,10 +254,10 @@ mod tests {
 
     #[test]
     fn rejects_too_long_mnemonic_and_sentences() {
-        let long: String = std::iter::repeat('好').take(61).collect();
+        let long = "好".repeat(61);
         let raw = format!(r#"{{"mnemonic":"{long}","sentences":["湖水碧绿。"]}}"#);
         assert!(validate(&raw, "碧绿").unwrap_err().to_string().contains("口诀"));
-        let long_sentence: String = std::iter::repeat('美').take(41).collect();
+        let long_sentence = "美".repeat(41);
         let raw2 = format!(
             r#"{{"mnemonic":"口诀","sentences":["碧绿的{long_sentence}。"]}}"#
         );
