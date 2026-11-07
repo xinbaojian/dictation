@@ -194,6 +194,10 @@ pub fn update(conn: &Connection, id: i64, text: &str, note: Option<&str>) -> App
         }
         return Err(AppError::Db(e));
     }
+    // 讲解卡内容针对旧字形，改词后作废（与上面清 wrong_chars 同一理由，ADR-16/20）
+    if text_changed {
+        crate::repo::ai_cards::delete_for_word(conn, id)?;
+    }
     get(conn, id)
 }
 
@@ -277,6 +281,56 @@ fn load_char_marks(
         }
     }
     Ok(marks)
+}
+
+/// 单个词的「标错过的字」聚合，给 AI 讲解卡当上下文。
+/// 逻辑与 load_char_marks 相同，只是按 word_id 过滤：批改记录 + 手工标记合并，升序去重。
+pub struct WordMarks {
+    pub wrong_chars: Vec<i64>,
+    pub whole_word_wrong: i64,
+    pub wrong_count: i64,
+}
+
+pub fn marks(conn: &Connection, word_id: i64) -> AppResult<WordMarks> {
+    let mut counts: BTreeSet<i64> = BTreeSet::new();
+    let mut whole = 0i64;
+    {
+        let mut stmt = conn.prepare(
+            "SELECT wrong_chars FROM session_items
+             WHERE word_id = ?1 AND result = 'wrong'",
+        )?;
+        let rows = stmt.query_map(params![word_id], |r| r.get::<_, String>(0))?;
+        for row in rows {
+            let chars = parse_char_indices(&row?);
+            if chars.is_empty() {
+                whole += 1;
+            } else {
+                counts.extend(chars);
+            }
+        }
+    }
+    {
+        let raw: Option<String> = conn
+            .query_row(
+                "SELECT wrong_chars FROM words WHERE id = ?1 AND wrong_chars <> ''",
+                params![word_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(raw) = raw {
+            counts.extend(parse_char_indices(&raw));
+        }
+    }
+    let wrong_count: i64 = conn.query_row(
+        "SELECT wrong_count FROM words WHERE id = ?1",
+        params![word_id],
+        |r| r.get(0),
+    )?;
+    Ok(WordMarks {
+        wrong_chars: counts.into_iter().collect(),
+        whole_word_wrong: whole,
+        wrong_count,
+    })
 }
 
 /// 错题本：状态为 learning 的词，按错误次数降序
@@ -491,5 +545,61 @@ mod tests {
 
         let m = list_mistakes(&conn, None).unwrap();
         assert!(m[0].wrong_chars.is_empty(), "改字后老下标失效，应清空");
+    }
+
+    #[test]
+    fn marks_merge_session_and_manual() {
+        let (conn, gid) = setup();
+        add(&conn, gid, "春天", None).unwrap();
+        let wid = mark_wrong(&conn, gid, "春天", vec![1]);
+        // 手工标记（错题本「添加词语」路径写的 words.wrong_chars）也要并进来
+        conn.execute(
+            "UPDATE words SET wrong_chars = '0' WHERE id = ?1",
+            params![wid],
+        )
+        .unwrap();
+        let m = marks(&conn, wid).unwrap();
+        assert_eq!(m.wrong_chars, vec![0, 1], "批改与手工标错合并、升序去重");
+        assert_eq!(m.whole_word_wrong, 0);
+        assert_eq!(m.wrong_count, 1);
+    }
+
+    #[test]
+    fn marks_counts_whole_word_wrong() {
+        let (conn, gid) = setup();
+        add(&conn, gid, "春天", None).unwrap();
+        let wid = mark_wrong(&conn, gid, "春天", vec![]);
+        let m = marks(&conn, wid).unwrap();
+        assert!(m.wrong_chars.is_empty());
+        assert_eq!(m.whole_word_wrong, 1);
+    }
+
+    #[test]
+    fn update_changed_text_deletes_ai_cards() {
+        let (conn, gid) = setup();
+        let w = add(&conn, gid, "碧绿", None).unwrap();
+        crate::repo::ai_cards::upsert(
+            &conn,
+            w.id,
+            "mnemonic",
+            &crate::domain::ai_card::CardContent {
+                decomposition: vec![],
+                mnemonic: "口诀".into(),
+                confusables: vec![],
+                sentences: vec!["碧绿的湖水。".into()],
+            },
+            "m",
+        )
+        .unwrap();
+        // 没改文本：卡保留
+        update(&conn, w.id, "碧绿", None).unwrap();
+        assert!(crate::repo::ai_cards::get(&conn, w.id, "mnemonic")
+            .unwrap()
+            .is_some());
+        // 改了文本：讲解针对旧字形，必须清掉
+        update(&conn, w.id, "碧色", None).unwrap();
+        assert!(crate::repo::ai_cards::get(&conn, w.id, "mnemonic")
+            .unwrap()
+            .is_none());
     }
 }
