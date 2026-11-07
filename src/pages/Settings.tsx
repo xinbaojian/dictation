@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import ConfirmModal from "../components/ConfirmModal";
 import Markdown from "../components/Markdown";
+import AiSettings from "../components/AiSettings";
 import { Toast, useNotice } from "../components/Toast";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorMessage } from "../lib/ipc";
@@ -473,6 +474,8 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
             </button>
           </div>
         </section>
+
+        <AiSettings notify={notify} />
 
         <section className="mt-5 rounded-xl border border-stone-200 bg-white p-5">
           <div className="flex items-start justify-between gap-4">
