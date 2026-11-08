@@ -301,6 +301,9 @@ pub fn extract_tar_bz2(archive: &Path, dest: &Path) -> AppResult<()> {
         let mut entry = entry?;
         match entry.header().entry_type() {
             tar::EntryType::Regular | tar::EntryType::Directory => {}
+            // pax 全局头（`g`）是打包器写的无害元数据，tar-rs 的 unpack 也直接跳过；
+            // 不放行的话官方归档一旦带它就会被当成攻击拒绝（第二轮审查 #1）
+            tar::EntryType::XGlobalHeader => continue,
             _ => {
                 return Err(AppError::msg(
                     "语音包内容含非法条目（链接等），已中止（下载源可能被篡改）",
@@ -390,12 +393,16 @@ fn install(
         match src {
             Source::TarBz2 { url } => {
                 let dest = root.join(format!("{}.tar.bz2", spec.id));
-                download_source(url, &dest, cancel, report)?;
+                // dest 只会由 download_source 在「完整下载」后 rename 产出：
+                // 重试（比如 matcha 第二个源失败后再来）直接复用，不重下已完成的归档
+                if !dest.is_file() {
+                    download_source(url, &dest, cancel, report)?;
+                }
                 mark_phase("extracting");
                 extract_tar_bz2(&dest, &staging)?;
                 merge_extracted(&staging, &model_tmp)?;
                 let _ = std::fs::remove_dir_all(&staging);
-                let _ = std::fs::remove_file(&dest);
+                // 归档留到全部源成功、校验落位后再删（中途失败重试还有用）
             }
             Source::File { url, name } => {
                 let dest = model_tmp.join(name);
@@ -407,6 +414,8 @@ fn install(
     models::verify(spec, &model_tmp)?;
     let _ = std::fs::remove_dir_all(&final_dir);
     std::fs::rename(&model_tmp, &final_dir)?;
+    // 成功路径才清归档；失败重试走上面的复用分支
+    let _ = std::fs::remove_file(root.join(format!("{}.tar.bz2", spec.id)));
     Ok(())
 }
 
@@ -497,6 +506,36 @@ mod tests {
         let out = dir.join("out");
         extract_tar_bz2(&archive, &out).unwrap();
         assert_eq!(std::fs::read_to_string(out.join("pkg/hello.txt")).unwrap(), "world");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 审查二轮 #1：pax 全局头（typeflag 'g'）是打包器元数据，tar-rs 的 unpack
+    /// 自己都会跳过——不能当攻击拒绝，否则带它的官方归档下载完装不上。
+    #[test]
+    fn extract_skips_pax_global_header() {
+        let dir = tmp("pax");
+        let archive = dir.join("pax.tar.bz2");
+        {
+            let f = std::fs::File::create(&archive).unwrap();
+            let mut enc = BzEncoder::new(f, Compression::fast());
+            // 写一条目 = 512 字节头 + 数据补齐到 512 倍数
+            let mut write_entry = |enc: &mut BzEncoder<std::fs::File>, header: &[u8; 512], data: &[u8]| {
+                enc.write_all(header).unwrap();
+                enc.write_all(data).unwrap();
+                let pad = (512 - data.len() % 512) % 512;
+                enc.write_all(&vec![0u8; pad]).unwrap();
+            };
+            // pax 全局头：typeflag 'g'，内容是 key=value 记录（这里随意）
+            let pax_body: &[u8] = b"30 mtime=1731000000\n";
+            write_entry(&mut enc, &raw_header("pax_global_header", pax_body.len() as u32, b'g', ""), pax_body);
+            // 紧跟的正常文件要正常落位
+            write_entry(&mut enc, &raw_header("model.onnx", 3, b'0', ""), b"abc");
+            enc.write_all(&[0u8; 1024]).unwrap(); // 结束块
+            enc.finish().unwrap().flush().unwrap();
+        }
+        let out = dir.join("out");
+        extract_tar_bz2(&archive, &out).expect("含 pax 全局头的归档要能解压");
+        assert_eq!(std::fs::read_to_string(out.join("model.onnx")).unwrap(), "abc");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

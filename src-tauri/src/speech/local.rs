@@ -213,6 +213,11 @@ fn read_wav(file: &std::path::Path) -> Option<(Vec<f32>, u32)> {
     if spec.channels != 1 || spec.bits_per_sample != 16 {
         return None;
     }
+    // 采样率 0 的畸形缓存会让音频线程的 NonZero 构造 panic（线程死了就永久失声），
+    // 当作未命中重新合成（审查二轮 #4）
+    if spec.sample_rate == 0 {
+        return None;
+    }
     let samples: Vec<f32> = reader
         .into_samples::<i16>()
         .map(|s| s.map(|v| v as f32 / 32768.0))
@@ -319,6 +324,26 @@ mod tests {
         assert_eq!(rate, 22050);
         assert_eq!(back.len(), 4);
         assert!((back[1] - 0.5).abs() < 0.001, "幅度误差应远小于 1/32768：{}", back[1]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 审查二轮 #4：采样率 0 的畸形缓存按未命中处理，
+    /// 否则会让音频线程 panic 后永久静默失声。
+    /// hound 不让直接写 rate=0（内部会除零），写完正常 WAV 后手工把头里的
+    /// 采样率字段清零（标准 44 字节头：偏移 24-27 是 sample rate，小端）。
+    #[test]
+    fn wav_with_zero_sample_rate_is_ignored() {
+        let dir = std::env::temp_dir().join(format!("dictation-tts-wav0-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("zero.wav");
+        let samples: Vec<f32> = vec![0.0, 0.5];
+        write_wav(&dir, &file, &samples, 22050);
+        let mut bytes = std::fs::read(&file).unwrap();
+        assert!(bytes.len() >= 28, "标准 WAV 头至少 44 字节：{}", bytes.len());
+        bytes[24..28].copy_from_slice(&0u32.to_le_bytes());
+        std::fs::write(&file, &bytes).unwrap();
+        assert!(read_wav(&file).is_none(), "采样率 0 必须当未命中");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

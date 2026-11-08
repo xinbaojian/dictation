@@ -67,6 +67,9 @@ impl SpeechService {
             } else {
                 eprintln!("本地语音包未就绪（可能被删除或未下完），已自动改用系统朗读");
             }
+        } else {
+            // 系统要出声了，对称地停掉本地可能还在播的试听（审查二轮 #2）
+            self.local.stop();
         }
         self.system.speak(text)
     }
@@ -116,6 +119,7 @@ mod tests {
     struct CountingLocal {
         fail: bool,
         calls: MutexVec,
+        stops: AtomicUsize,
     }
     // 简单包装，避免在每个测试里重复
     type MutexVec = std::sync::Mutex<Vec<String>>;
@@ -124,7 +128,9 @@ mod tests {
             self.calls.lock().unwrap().push(model_id.to_string());
             if self.fail { Err(AppError::msg("本地合成失败")) } else { Ok(()) }
         }
-        fn stop(&self) {}
+        fn stop(&self) {
+            self.stops.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
     /// 生成「永远返回 v」的就绪判定（返回类型注解让闭包拿到正确的 HRTB 签名）
@@ -138,7 +144,11 @@ mod tests {
             calls: AtomicUsize::new(0),
             stops: AtomicUsize::new(0),
         });
-        let local = Arc::new(CountingLocal { fail: local_fail, calls: std::sync::Mutex::new(vec![]) });
+        let local = Arc::new(CountingLocal {
+            fail: local_fail,
+            calls: std::sync::Mutex::new(vec![]),
+            stops: AtomicUsize::new(0),
+        });
         (
             SpeechService {
                 system: system.clone(),
@@ -223,15 +233,18 @@ mod tests {
         assert!(loc.calls.lock().unwrap().is_empty());
     }
 
-    /// 审查 P2-2：走本地前要停系统正在念的上一句，避免双声重叠
+    /// 审查 P2-2：走本地前要停系统正在念的上一句，避免双声重叠；
+    /// 审查二轮 #2：系统路径对称地停本地（试听切回复习页的场景）
     #[test]
     fn local_path_stops_system_first() {
-        let (svc, sys, _loc) = service(false, true);
+        let (svc, sys, loc) = service(false, true);
         svc.speak("local", None, Some("matcha-zh-baker"), "词").unwrap();
         assert_eq!(sys.stops.load(Ordering::SeqCst), 1, "本地出声前先停系统");
-        // 系统引擎路径不需要预停（SystemSpeaker::speak 自带先停上一句）
+        assert_eq!(loc.stops.load(Ordering::SeqCst), 0, "本地路径不用停自己（speak_model 内部已停）");
+        // 系统引擎路径要停掉本地可能还在播的试听
         svc.speak("system", None, None, "词").unwrap();
-        assert_eq!(sys.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(sys.stops.load(Ordering::SeqCst), 1, "系统 speak 自带先停上一句");
+        assert_eq!(loc.stops.load(Ordering::SeqCst), 1, "系统出声前停本地");
     }
 
     #[test]
