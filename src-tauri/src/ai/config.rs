@@ -5,12 +5,20 @@ use std::path::{Path, PathBuf};
 
 const CONFIG_FILE: &str = ".ai-config.json";
 
+/// 输出上限的本地校验上限：防手滑多打几个零；服务端模型真实上限由 provider 自己校验
+pub const MAX_OUTPUT_TOKENS_LIMIT: u32 = 1_000_000;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiConfig {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
+    /// 输出上限（max_tokens）：None = 请求不带该字段，交服务端默认；思考型模型的
+    /// 推理 token 也算输出预算，硬编码小值会把回答拦腰截断（finish_reason=length）。
+    /// 旧配置文件没有此字段，serde default 兜住视为不限制。
+    #[serde(default)]
+    pub max_output_tokens: Option<u32>,
 }
 
 /// 回传前端的视图：key 只给掩码，原值绝不离开后端
@@ -21,6 +29,7 @@ pub struct AiConfigView {
     pub base_url: String,
     pub model: String,
     pub key_mask: String,
+    pub max_output_tokens: Option<u32>,
 }
 
 pub fn config_path(dir: &Path) -> PathBuf {
@@ -40,12 +49,27 @@ pub fn load_required(dir: &Path) -> AppResult<AiConfig> {
     load(dir)?.ok_or_else(|| AppError::msg("请先在设置里配置 AI 服务"))
 }
 
-/// `api_key = None` 或空白表示沿用已保存的 key（前端密钥框留空即「不修改」）
-pub fn save(dir: &Path, base_url: &str, model: &str, api_key: Option<String>) -> AppResult<()> {
+/// `api_key = None` 或空白表示沿用已保存的 key（前端密钥框留空即「不修改」）。
+/// 与 apiKey 不同，`max_output_tokens = None` 是显式的「不限制」：
+/// 前端表单即真相（数字框显示的就是当前值），保存永远覆盖旧值。
+pub fn save(
+    dir: &Path,
+    base_url: &str,
+    model: &str,
+    api_key: Option<String>,
+    max_output_tokens: Option<u32>,
+) -> AppResult<()> {
     let base_url = base_url.trim().trim_end_matches('/').to_string();
     let model = model.trim().to_string();
     if base_url.is_empty() || model.is_empty() {
         return Err(AppError::msg("请填写服务地址和模型名"));
+    }
+    if let Some(n) = max_output_tokens {
+        if n == 0 || n > MAX_OUTPUT_TOKENS_LIMIT {
+            return Err(AppError::msg(format!(
+                "最大输出 tokens 要在 1~{MAX_OUTPUT_TOKENS_LIMIT} 之间（留空 = 不限制）"
+            )));
+        }
     }
     let existing = load(dir).unwrap_or(None);
     let api_key = match api_key {
@@ -55,7 +79,7 @@ pub fn save(dir: &Path, base_url: &str, model: &str, api_key: Option<String>) ->
     if api_key.is_empty() {
         return Err(AppError::msg("请填写 API Key（只存在本机数据目录，不会上传）"));
     }
-    let cfg = AiConfig { base_url, model, api_key };
+    let cfg = AiConfig { base_url, model, api_key, max_output_tokens };
     write_private(&config_path(dir), serde_json::to_string_pretty(&cfg)?.as_bytes())
 }
 
@@ -75,12 +99,14 @@ pub fn view(dir: &Path) -> AiConfigView {
             base_url: c.base_url,
             model: c.model,
             key_mask: mask_key(&c.api_key),
+            max_output_tokens: c.max_output_tokens,
         },
         _ => AiConfigView {
             configured: false,
             base_url: String::new(),
             model: String::new(),
             key_mask: String::new(),
+            max_output_tokens: None,
         },
     }
 }
@@ -109,13 +135,20 @@ mod tests {
     #[test]
     fn save_then_view_masks_key() {
         let dir = tmp_dir();
-        save(&dir, "https://api.deepseek.com/", "deepseek-chat", Some("sk-1234567890abcd".into()))
-            .unwrap();
+        save(
+            &dir,
+            "https://api.deepseek.com/",
+            "deepseek-chat",
+            Some("sk-1234567890abcd".into()),
+            None,
+        )
+        .unwrap();
         let v = view(&dir);
         assert!(v.configured);
         assert_eq!(v.base_url, "https://api.deepseek.com", "尾部斜杠要归一");
         assert_eq!(v.model, "deepseek-chat");
         assert_eq!(v.key_mask, "sk-***abcd");
+        assert_eq!(v.max_output_tokens, None);
         assert!(!serde_json::to_string(&v).unwrap().contains("1234567890"));
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -123,8 +156,8 @@ mod tests {
     #[test]
     fn empty_key_keeps_old_one() {
         let dir = tmp_dir();
-        save(&dir, "https://x.example", "m", Some("sk-oldkey12345".into())).unwrap();
-        save(&dir, "https://x.example", "m2", None).unwrap();
+        save(&dir, "https://x.example", "m", Some("sk-oldkey12345".into()), None).unwrap();
+        save(&dir, "https://x.example", "m2", None, None).unwrap();
         let cfg = load(&dir).unwrap().unwrap();
         assert_eq!(cfg.api_key, "sk-oldkey12345");
         assert_eq!(cfg.model, "m2");
@@ -134,7 +167,7 @@ mod tests {
     #[test]
     fn save_without_any_key_errors() {
         let dir = tmp_dir();
-        let err = save(&dir, "https://x.example", "m", None).unwrap_err();
+        let err = save(&dir, "https://x.example", "m", None, None).unwrap_err();
         assert!(err.to_string().contains("API Key"));
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -142,7 +175,7 @@ mod tests {
     #[test]
     fn clear_then_unconfigured() {
         let dir = tmp_dir();
-        save(&dir, "https://x.example", "m", Some("sk-abcdef123456".into())).unwrap();
+        save(&dir, "https://x.example", "m", Some("sk-abcdef123456".into()), Some(100000)).unwrap();
         clear(&dir).unwrap();
         assert!(!view(&dir).configured);
         std::fs::remove_dir_all(&dir).ok();
@@ -153,7 +186,7 @@ mod tests {
         let dir = tmp_dir();
         std::fs::write(config_path(&dir), b"{broken").unwrap();
         assert!(!view(&dir).configured);
-        save(&dir, "https://x.example", "m", Some("sk-goodkey12345".into())).unwrap();
+        save(&dir, "https://x.example", "m", Some("sk-goodkey12345".into()), None).unwrap();
         assert!(view(&dir).configured);
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -163,9 +196,49 @@ mod tests {
     fn config_file_is_private() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tmp_dir();
-        save(&dir, "https://x.example", "m", Some("sk-secret12345".into())).unwrap();
+        save(&dir, "https://x.example", "m", Some("sk-secret12345".into()), None).unwrap();
         let mode = std::fs::metadata(config_path(&dir)).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "凭据文件必须 0600");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn old_config_without_max_tokens_loads_as_unlimited() {
+        let dir = tmp_dir();
+        // 旧版本写的文件没有 maxOutputTokens 字段：serde default 兜住，视为不限制
+        std::fs::write(
+            config_path(&dir),
+            br#"{"baseUrl":"https://x.example","apiKey":"sk-oldkey12345","model":"m"}"#,
+        )
+        .unwrap();
+        let cfg = load(&dir).unwrap().unwrap();
+        assert_eq!(cfg.api_key, "sk-oldkey12345");
+        assert_eq!(cfg.max_output_tokens, None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_rejects_invalid_max_tokens() {
+        let dir = tmp_dir();
+        for bad in [0u32, MAX_OUTPUT_TOKENS_LIMIT + 1] {
+            let err = save(&dir, "https://x.example", "m", Some("sk-abcdef123456".into()), Some(bad))
+                .unwrap_err();
+            assert!(err.to_string().contains("最大输出 tokens"), "bad = {bad}");
+        }
+        // 校验失败不落盘
+        assert!(!config_path(&dir).exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_persists_max_tokens_and_none_means_unlimited() {
+        let dir = tmp_dir();
+        save(&dir, "https://x.example", "m", Some("sk-abcdef123456".into()), Some(100000)).unwrap();
+        assert_eq!(load(&dir).unwrap().unwrap().max_output_tokens, Some(100000));
+        assert_eq!(view(&dir).max_output_tokens, Some(100000));
+        // 清空表单再存 = 显式回到不限制（不是沿用旧值）
+        save(&dir, "https://x.example", "m", None, None).unwrap();
+        assert_eq!(load(&dir).unwrap().unwrap().max_output_tokens, None);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

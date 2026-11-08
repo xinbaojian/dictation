@@ -90,7 +90,7 @@ related: [architecture.md, decisions.md]
 | `components/Toast.tsx` | `useNotice()` 返回 `{notice, notify}`，4 秒自动消失 |
 | `components/GroupModal.tsx` / `PasteImportModal.tsx` | 分组表单 / 粘贴解析预览（预览走后端 `preview_words`） |
 | `components/MnemonicCard.tsx` | AI 巧记讲解卡（ADR-20）：内容层（积木/口诀/例句）与辨析层分开呈现，展开可自动读口诀，遮蔽模式整卡隐藏 |
-| `components/AiSettings.tsx` | AI 讲解配置区块：OpenAI 兼容服务地址/模型/key（key 只回掩码）、测试连接、清除确认；配置存数据目录 `.ai-config.json` |
+| `components/AiSettings.tsx` | AI 讲解配置区块：OpenAI 兼容服务地址/模型/key（key 只回掩码）、最大输出 tokens（留空 = 不传 `max_tokens`，思考型模型建议 100000+）、测试连接、清除确认；配置存数据目录 `.ai-config.json` |
 
 ## 约定
 

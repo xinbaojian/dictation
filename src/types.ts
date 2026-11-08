@@ -170,6 +170,8 @@ export interface AiConfigView {
   baseUrl: string;
   model: string;
   keyMask: string;
+  /** 最大输出 tokens；null = 请求不带 max_tokens（交服务端默认上限） */
+  maxOutputTokens: number | null;
 }
 
 /** 抽词偏好：开一场默写时勾选，全不选 = 纯随机 */

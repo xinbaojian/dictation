@@ -125,12 +125,20 @@ export const api = {
 
   // AI 讲解卡（默认关闭；配置了 .ai-config.json 才会联网）
   getAiConfig: () => invoke<AiConfigView>("get_ai_config"),
-  saveAiConfig: (baseUrl: string, model: string, apiKey: string | null) =>
-    invoke<AiConfigView>("save_ai_config", { baseUrl, model, apiKey }),
+  saveAiConfig: (
+    baseUrl: string,
+    model: string,
+    apiKey: string | null,
+    maxOutputTokens: number | null,
+  ) => invoke<AiConfigView>("save_ai_config", { baseUrl, model, apiKey, maxOutputTokens }),
   clearAiConfig: () => invoke<AiConfigView>("clear_ai_config"),
   /** 测连接，不落盘：传当前表单值（apiKey 留空则后端回退已存 key）；不传则测已保存配置 */
-  testAiConfig: (baseUrl?: string, model?: string, apiKey?: string | null) =>
-    invoke<string>("test_ai_config", { baseUrl, model, apiKey }),
+  testAiConfig: (
+    baseUrl?: string,
+    model?: string,
+    apiKey?: string | null,
+    maxOutputTokens?: number | null,
+  ) => invoke<string>("test_ai_config", { baseUrl, model, apiKey, maxOutputTokens }),
   getWordCard: (wordId: number) => invoke<AiCard | null>("get_word_card", { wordId }),
   generateWordCard: (wordId: number) => invoke<AiCard>("generate_word_card", { wordId }),
 

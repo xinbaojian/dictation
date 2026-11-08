@@ -148,7 +148,7 @@ related: [overview.md, quiz-flow.md]
 - **结论**：错题复习页可按需生成「巧记讲解卡」（部件拆解、口诀、例句、易混字辨析）。AI 服务为 OpenAI 兼容 chat completions（DeepSeek / 智谱 / 硅基流动等任填），配置存数据目录 `.ai-config.json`（0600；凭据不进 `settings` 表，key 原值不回传前端，只回掩码）；生成内容存 `ai_cards` 表（随整库快照同步），按词缓存、生成一次离线复用
 - **理由**：「怎么记住这个字」是无法预计算的个性化内容，是 LLM 强项而家长最缺。缓存 + 显式配置让默认安装保持零联网——与 ADR-17 的 MySQL 同步同构：又一个「可选的外挂」，不是产品定位的转向
 - **红线**：LLM 只产内容，**永不写学习进度**（`word_progress` 不变，讲解不是进度）；输出必须过 `domain/ai_card.rs::validate`（术语黑名单、例句含目标词、长度上限、无换行）才入库；讲解卡在「先自己写」遮蔽模式下整卡隐藏（口诀=答案提示）；面向孩子的内容层（积木/口诀/例句）与给家长的辨析层分开呈现
-- **实现**：`commands/ai.rs` 六命令（生成走「拿锁读词→放锁等 HTTP→拿锁落库」，`MutexGuard` 不跨 await）；`ai/config.rs` + `ai/client.rs`（reqwest rustls，30s 超时，校验失败回喂重试一次）；词文本被编辑时清卡（对齐 ADR-16 清手工错字的先例）；新依赖仅 `reqwest`
+- **实现**：`commands/ai.rs` 六命令（生成走「拿锁读词→放锁等 HTTP→拿锁落库」，`MutexGuard` 不跨 await）；`ai/config.rs` + `ai/client.rs`（reqwest rustls，60s 超时，校验失败回喂重试一次）；**输出上限可配**（`max_output_tokens`，2026-11-08 起：留空 = 请求不带 `max_tokens` 交服务端默认，填了原样透传——此前硬编码 2048/16 会把思考型模型的推理+回答拦腰截断，`finish_reason=length`）；词文本被编辑时清卡（对齐 ADR-16 清手工错字的先例）；新依赖仅 `reqwest`
 - **边界**：Phase 2 在线 TTS（智谱 GLM-TTS 等，`/audio/speech`）将复用同一配置文件与 opt-in 边界，届时另立 ADR-21 修订 ADR-19 的「不引联网引擎」
 
 ## ADR-21 本地 TTS 语音包：运行时随包、模型按需下载，系统朗读兜底

@@ -10,6 +10,7 @@ export default function AiSettings({ notify }: { notify: (kind: "ok" | "error", 
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [maxTokens, setMaxTokens] = useState("");
   const [busy, setBusy] = useState(false);
   const [askClear, setAskClear] = useState(false);
 
@@ -20,6 +21,7 @@ export default function AiSettings({ notify }: { notify: (kind: "ok" | "error", 
         setView(v);
         setBaseUrl(v.baseUrl);
         setModel(v.model);
+        setMaxTokens(v.maxOutputTokens != null ? String(v.maxOutputTokens) : "");
       } catch (e) {
         notify("error", "AI 配置读取失败：" + errorMessage(e));
       }
@@ -27,11 +29,25 @@ export default function AiSettings({ notify }: { notify: (kind: "ok" | "error", 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** 最大输出 tokens：空串 → null（不限制，请求不带 max_tokens）；非法输入返回 "invalid"，由调用方统一报错 */
+  const parseMaxTokens = (): number | null | "invalid" => {
+    const t = maxTokens.trim();
+    if (!t) return null;
+    const n = Number(t);
+    if (!Number.isInteger(n) || n < 1 || n > 1_000_000) return "invalid";
+    return n;
+  };
+
   const save = async () => {
     if (busy) return;
+    const mt = parseMaxTokens();
+    if (mt === "invalid") {
+      notify("error", "最大输出 tokens 要是 1~1000000 的整数（留空 = 不限制）");
+      return;
+    }
     setBusy(true);
     try {
-      const v = await api.saveAiConfig(baseUrl.trim(), model.trim(), apiKey.trim() || null);
+      const v = await api.saveAiConfig(baseUrl.trim(), model.trim(), apiKey.trim() || null, mt);
       setView(v);
       setApiKey("");
       notify("ok", "AI 配置已保存");
@@ -44,9 +60,14 @@ export default function AiSettings({ notify }: { notify: (kind: "ok" | "error", 
 
   const test = async () => {
     if (busy) return;
+    const mt = parseMaxTokens();
+    if (mt === "invalid") {
+      notify("error", "最大输出 tokens 要是 1~1000000 的整数（留空 = 不限制）");
+      return;
+    }
     setBusy(true);
     try {
-      const reply = await api.testAiConfig(baseUrl.trim(), model.trim(), apiKey.trim() || null);
+      const reply = await api.testAiConfig(baseUrl.trim(), model.trim(), apiKey.trim() || null, mt);
       notify("ok", "连接正常，模型回复：" + reply);
     } catch (e) {
       notify("error", "连接失败：" + errorMessage(e));
@@ -64,6 +85,7 @@ export default function AiSettings({ notify }: { notify: (kind: "ok" | "error", 
       setBaseUrl("");
       setModel("");
       setApiKey("");
+      setMaxTokens("");
       // 后端 I/O 失败已由 catch 报错；这里按返回值判定，configured 仍为 true 属理论不可达的防御分支
       if (!v.configured) notify("ok", "AI 配置已清除，应用回到纯离线状态");
       else notify("error", "清除失败：配置仍生效，请重试");
@@ -111,7 +133,7 @@ export default function AiSettings({ notify }: { notify: (kind: "ok" | "error", 
             placeholder="deepseek-chat / glm-4-flash 等"
           />
         </label>
-        <label className="block text-xs font-medium text-stone-600 sm:col-span-2">
+        <label className="block text-xs font-medium text-stone-600">
           API Key
           <input
             type="password"
@@ -123,6 +145,16 @@ export default function AiSettings({ notify }: { notify: (kind: "ok" | "error", 
                 ? `已保存 ${view.keyMask}（留空不修改）`
                 : "sk-…（只存在本机数据目录，不上传）"
             }
+          />
+        </label>
+        <label className="block text-xs font-medium text-stone-600">
+          最大输出 tokens（可选）
+          <input
+            className={inputCls}
+            value={maxTokens}
+            onChange={(e) => setMaxTokens(e.target.value)}
+            inputMode="numeric"
+            placeholder="留空 = 不限制；思考型模型建议 100000"
           />
         </label>
       </div>

@@ -3,27 +3,32 @@ use crate::domain::ai_card::{self, CardContent, ChatMessage, WordContext};
 use crate::error::{AppError, AppResult};
 use serde_json::{json, Value};
 
-/// OpenAI 兼容 chat/completions 请求体（纯函数，便于单测）
-pub fn build_body(model: &str, messages: &[ChatMessage]) -> Value {
-    json!({
+/// OpenAI 兼容 chat/completions 请求体（纯函数，便于单测）。
+/// `max_output_tokens = None` 时**不传** `max_tokens`：交服务端自己的默认上限；
+/// 配置了才原样透传（思考型模型的推理与回答共用输出预算，硬编码小值如 16/2048
+/// 会把推理或回答拦腰截断，finish_reason=length）。
+pub fn build_body(model: &str, messages: &[ChatMessage], max_output_tokens: Option<u32>) -> Value {
+    let mut body = json!({
         "model": model,
         "messages": messages
             .iter()
             .map(|m| json!({ "role": m.role, "content": m.content }))
             .collect::<Vec<_>>(),
         "temperature": 0.7,
-        // 思考型模型（deepseek-flash 等）的推理与回答共用这份预算：实测一次推理就花
-        // 400+ tokens，500 会把 JSON 拦腰截断（finish_reason=length）。2048 让两边都够。
-        "max_tokens": 2048,
         "stream": false,
-    })
+    });
+    if let Some(n) = max_output_tokens {
+        body["max_tokens"] = json!(n);
+    }
+    body
 }
 
-/// 发请求并抽出 choices[0].message.content。30 秒超时；只被 spawn_blocking 调用。
+/// 发请求并抽出 choices[0].message.content。60 秒超时（不设输出上限后思考型模型
+/// 会完整输出推理，30s 偏紧）；只被 spawn_blocking 调用。
 fn post_chat(cfg: &AiConfig, body: &Value) -> AppResult<String> {
     let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
     let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| AppError::msg(format!("初始化 AI 客户端失败：{e}")))?;
     let resp = client
@@ -44,7 +49,7 @@ fn post_chat(cfg: &AiConfig, body: &Value) -> AppResult<String> {
     // 截断的 JSON 必然解析失败；在 validate 报「不是合法的 JSON」之前先给准确的病因
     if v["choices"][0]["finish_reason"].as_str() == Some("length") {
         return Err(AppError::msg(
-            "AI 输出被长度上限截断（思考型模型的推理也占预算），请重试或换个模型",
+            "AI 输出被长度上限截断（思考型模型的推理也占预算）：请在设置里调大「最大输出 tokens」或留空不限制，再重试",
         ));
     }
     v["choices"][0]["message"]["content"]
@@ -53,15 +58,15 @@ fn post_chat(cfg: &AiConfig, body: &Value) -> AppResult<String> {
         .ok_or_else(|| AppError::msg("AI 返回内容为空，请重试或换个模型"))
 }
 
-/// 设置页「测试连接」：最小请求验证连通与鉴权
+/// 设置页「测试连接」：最小请求验证连通与鉴权。
+/// 早期版本硬编码 `max_tokens: 16`——思考型模型连推理都放不下，测连接必然
+/// finish_reason=length 报「被截断」。现在与生成请求共用配置（None = 不传）。
 pub fn test_connection(cfg: &AiConfig) -> AppResult<String> {
-    let body = json!({
-        "model": cfg.model,
-        "messages": [{ "role": "user", "content": "请只回复四个字：连接正常" }],
-        "max_tokens": 16,
-        "temperature": 0,
-        "stream": false,
-    });
+    let messages = [ChatMessage {
+        role: "user".into(),
+        content: "请只回复四个字：连接正常".into(),
+    }];
+    let body = build_body(&cfg.model, &messages, cfg.max_output_tokens);
     let reply = post_chat(cfg, &body)?;
     let brief: String = reply.chars().take(50).collect();
     Ok(brief)
@@ -71,7 +76,7 @@ pub fn test_connection(cfg: &AiConfig) -> AppResult<String> {
 /// 只做 I/O 编排；校验规则全在 domain::ai_card（有单测）。
 pub fn generate_content(cfg: &AiConfig, ctx: &WordContext) -> AppResult<(CardContent, String)> {
     let mut messages = ai_card::build_messages(ctx);
-    let raw = post_chat(cfg, &build_body(&cfg.model, &messages))?;
+    let raw = post_chat(cfg, &build_body(&cfg.model, &messages, cfg.max_output_tokens))?;
     match ai_card::validate(&raw, &ctx.text) {
         Ok(content) => Ok((content, cfg.model.clone())),
         Err(first) => {
@@ -82,7 +87,7 @@ pub fn generate_content(cfg: &AiConfig, ctx: &WordContext) -> AppResult<(CardCon
                     "你上次的输出不合格：{first}。请严格按要求的 JSON 格式重新输出，只输出 JSON 本身。"
                 ),
             });
-            let raw2 = post_chat(cfg, &build_body(&cfg.model, &messages))?;
+            let raw2 = post_chat(cfg, &build_body(&cfg.model, &messages, cfg.max_output_tokens))?;
             let content = ai_card::validate(&raw2, &ctx.text).map_err(|e| {
                 AppError::msg(format!("生成的内容不合格式（{e}），请重试或换个模型"))
             })?;
@@ -96,17 +101,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn body_carries_model_and_messages() {
+    fn body_omits_max_tokens_when_unset() {
         let msgs = vec![
             ChatMessage { role: "system".into(), content: "s".into() },
             ChatMessage { role: "user".into(), content: "u".into() },
         ];
-        let b = build_body("deepseek-chat", &msgs);
+        let b = build_body("deepseek-chat", &msgs, None);
         assert_eq!(b["model"], "deepseek-chat");
         assert_eq!(b["messages"][0]["role"], "system");
         assert_eq!(b["messages"][1]["content"], "u");
-        assert_eq!(b["max_tokens"], 2048);
         assert_eq!(b["stream"], false);
+        assert!(
+            b.get("max_tokens").is_none(),
+            "留空 = 不限制：请求里不出现 max_tokens 字段"
+        );
+    }
+
+    #[test]
+    fn body_carries_configured_max_tokens() {
+        let msgs = vec![ChatMessage { role: "user".into(), content: "u".into() }];
+        let b = build_body("glm-4.6", &msgs, Some(100000));
+        assert_eq!(b["model"], "glm-4.6");
+        assert_eq!(b["max_tokens"], 100000, "配置了就原样透传，不做本地封顶");
     }
 
     /// 需要真实服务：设 AI_BASE_URL / AI_KEY / AI_MODEL 后
@@ -118,6 +134,7 @@ mod tests {
             base_url: std::env::var("AI_BASE_URL").unwrap(),
             api_key: std::env::var("AI_KEY").unwrap(),
             model: std::env::var("AI_MODEL").unwrap(),
+            max_output_tokens: None, // 贴近默认行为：不限制
         };
         let ctx = WordContext { text: "碧绿".into(), wrong_chars: vec![0], wrong_count: 3, whole_word_wrong: 0 };
         let (content, _) = generate_content(&cfg, &ctx).unwrap();
