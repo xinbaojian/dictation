@@ -70,21 +70,34 @@ pub fn restart_app(app: tauri::AppHandle) {
     app.restart();
 }
 
-/// 用系统离线语音朗读一段文本（笔画复习页读词语）。异步：启动朗读后立即返回。
-/// 子进程 / COM 都不能在 async 线程上直接做，照同步命令的规矩挪去阻塞线程池。
+/// 朗读一段文本（笔画复习页读词语 / 设置页试听）。异步：启动朗读后立即返回。
+/// 引擎由 settings.ttsEngine 决定（系统 / 本地语音包，本地失败自动兜底系统，ADR-21）；
+/// `model_id` 供设置页「试听」指定语音包，无视当前引擎设置。
+/// 子进程 / COM / ONNX 推理都不能在 async 线程上直接做，照同步命令的规矩挪去阻塞线程池。
 #[tauri::command]
-pub async fn speak_text(state: State<'_, AppState>, text: String) -> AppResult<()> {
-    let speaker = state.speaker.clone();
-    tauri::async_runtime::spawn_blocking(move || speaker.speak(&text))
-        .await
-        .map_err(|_| AppError::msg("朗读没有完成"))?
+pub async fn speak_text(
+    state: State<'_, AppState>,
+    text: String,
+    model_id: Option<String>,
+) -> AppResult<()> {
+    let (engine, configured) = {
+        let conn = state.conn()?;
+        let s = settings::load(&conn)?;
+        (s.tts_engine, s.tts_model_id)
+    };
+    let speech = state.speech.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        speech.speak(&engine, model_id.as_deref(), configured.as_deref(), &text)
+    })
+    .await
+    .map_err(|_| AppError::msg("朗读没有完成"))?
 }
 
-/// 停止当前朗读（翻词 / 退出复习页时调用）
+/// 停止当前朗读（翻词 / 退出复习页时调用）；本地与系统两个引擎都停
 #[tauri::command]
 pub async fn stop_speak(state: State<'_, AppState>) -> AppResult<()> {
-    let speaker = state.speaker.clone();
-    tauri::async_runtime::spawn_blocking(move || speaker.stop())
+    let speech = state.speech.clone();
+    tauri::async_runtime::spawn_blocking(move || speech.stop())
         .await
         .map_err(|_| AppError::msg("停止朗读失败"))
 }

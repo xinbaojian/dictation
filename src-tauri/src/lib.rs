@@ -5,10 +5,11 @@ mod domain;
 mod error;
 mod repo;
 mod speech;
+mod tts;
 
 use error::{AppError, AppResult};
 use rusqlite::Connection;
-use speech::{Speaker, SystemSpeaker};
+use speech::{LocalTts, SpeechService, SystemSpeaker};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::Manager;
@@ -16,8 +17,10 @@ use tauri::Manager;
 pub struct AppState {
     db: Mutex<Connection>,
     data_dir: PathBuf,
-    /// TTS：系统自带离线语音（笔画复习页朗读词语用）
-    speaker: Arc<dyn Speaker>,
+    /// 语音包下载注册表（全局同时只允许一个任务）
+    tts: Arc<tts::download::Downloads>,
+    /// 朗读路由：系统 / 本地语音包，本地失败自动兜底系统（ADR-21）
+    speech: SpeechService,
 }
 
 impl AppState {
@@ -44,10 +47,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let (conn, data_dir) = db::init(app.handle())?;
+            let speech = SpeechService::new(
+                Arc::new(SystemSpeaker::new()),
+                Arc::new(LocalTts::new(data_dir.clone())),
+                data_dir.clone(),
+            );
             app.manage(AppState {
                 db: Mutex::new(conn),
                 data_dir,
-                speaker: Arc::new(SystemSpeaker::new()),
+                tts: Arc::new(tts::download::Downloads::default()),
+                speech,
             });
             Ok(())
         })
@@ -103,6 +112,10 @@ pub fn run() {
             commands::ai::test_ai_config,
             commands::ai::get_word_card,
             commands::ai::generate_word_card,
+            commands::tts::list_tts_models,
+            commands::tts::download_tts_model,
+            commands::tts::cancel_tts_download,
+            commands::tts::delete_tts_model,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");

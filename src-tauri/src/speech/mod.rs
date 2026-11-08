@@ -10,6 +10,19 @@ pub trait Speaker: Send + Sync {
     fn stop(&self);
 }
 
+/// 本地语音包合成（ADR-21）：按模型朗读，失败由上层路由兜底到系统语音。
+/// 独立于 `Speaker` 是因为本地合成需要知道「用哪个语音包」。
+pub trait LocalVoice: Send + Sync {
+    fn speak_model(&self, model_id: &str, text: &str) -> AppResult<()>;
+    fn stop(&self);
+}
+
+pub mod local;
+pub mod service;
+
+pub use local::LocalTts;
+pub use service::SpeechService;
+
 pub struct NullSpeaker;
 
 impl Speaker for NullSpeaker {

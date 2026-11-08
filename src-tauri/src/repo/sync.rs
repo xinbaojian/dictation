@@ -3262,6 +3262,8 @@ mod tests {
                 mask_seconds: 8,
                 auto_check_updates: false,
                 stroke_auto_speak: true,
+                tts_engine: "local".into(),
+                tts_model_id: Some("matcha-zh-baker".into()),
             },
         )
         .unwrap();

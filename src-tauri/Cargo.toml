@@ -33,6 +33,17 @@ sha2 = "0.10"
 # AI 讲解卡：OpenAI 兼容对话（默认不启用；只有配置了 .ai-config.json 才联网）。
 # rustls 避免跨平台拉系统 OpenSSL
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+# 本地 TTS 运行时：sherpa-onnx 官方 Rust 绑定（默认静态链接，
+# build.rs 自动从 GitHub Releases 下载平台预编译库，无需 cmake；
+# 离线构建可用 SHERPA_ONNX_ARCHIVE_DIR 覆盖）。模型本体不随包，见 tts/
+sherpa-onnx = "2.0.1"
+# 播放合成音频：直接喂 f32 样本缓冲，只要 playback（cpal），不要解码器
+rodio = { version = "0.23", default-features = false, features = ["playback"] }
+# 语音包是 GitHub Releases 的 .tar.bz2：纯 Rust 解压，tar 条目做路径穿越防护
+bzip2 = "0.6"
+tar = "0.4"
+# 朗读音频缓存（tts-cache/）的 WAV 读写
+hound = "3.5"
 
 # 朗读（SAPI ISpVoice）只在 Windows 上编译
 [target.'cfg(windows)'.dependencies]
