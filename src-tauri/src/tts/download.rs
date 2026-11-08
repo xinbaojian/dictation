@@ -108,14 +108,22 @@ impl Downloads {
     }
 }
 
-/// Range 续传请求头：从已有字节数继续
-pub fn range_value(existing: u64) -> String {
-    format!("bytes={existing}-")
+/// 分段 Range 请求头（审查 P2-1）：`bytes=start-end`（含两端）。
+/// 分段是为了给每段请求配总超时——reqwest blocking 没有单次读超时，
+/// 不分段的话断流会让 read 永久阻塞，取消开关也拦不住。
+pub fn segment_range(start: u64, end_inclusive: u64) -> String {
+    format!("bytes={start}-{end_inclusive}")
 }
+
+/// 每段大小：8MB。慢速网络（≥45KB/s）也能在段超时内完成；
+/// 段边界同时是取消开关与断点续传的检查点
+const SEGMENT: u64 = 8 * 1024 * 1024;
+/// 单段总超时（含建立连接与读完整段）
+const SEGMENT_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ResumePlan {
-    /// 服务器回 206：从 .part 现有长度续写
+    /// 服务器回 206：按 Range 续传
     Append,
     /// 服务器回 200 / 本地没有断点：从头重下
     Restart,
@@ -147,7 +155,8 @@ pub fn download_source_for_test(
     download_source(url, dest, cancel, on_progress)
 }
 
-/// 下载单个源到 dest。进度回调只做展示，不抛错。
+/// 下载单个源到 dest（分段 Range + 每段总超时 + 断点续传）。
+/// 进度回调只做展示，不抛错。失败 / 取消保留 .part，下次从断点继续。
 fn download_source(
     url: &str,
     dest: &Path,
@@ -158,80 +167,107 @@ fn download_source(
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let existing = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
-
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(30))
-        // 不设总超时：大文件整个请求可能持续很久，卡死由取消开关兜底
+        // 每段请求一个总超时：断流最多卡到本段超时，不会永久挂死
+        .timeout(SEGMENT_TIMEOUT)
         .build()
         .map_err(|e| AppError::msg(format!("初始化下载失败：{e}")))?;
-    let mut req = client.get(url);
-    if existing > 0 {
-        req = req.header("Range", range_value(existing));
-    }
-    let mut resp = req
-        .send()
-        .map_err(|e| AppError::msg(format!("连接下载服务器失败：{e}（请检查网络后重试）")))?;
-    if !resp.status().is_success() {
-        let status = resp.status().as_u16();
-        return Err(AppError::msg(format!("下载失败（HTTP {status}），请稍后重试")));
-    }
 
-    let plan = resume_plan(existing, resp.status().as_u16());
-    // 续传 = 追加写；重下 = 覆写（create/write/truncate 三件套缺一会拒绝打开）
-    let mut file = match plan {
-        ResumePlan::Append => std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&part)?,
-        ResumePlan::Restart => std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&part)?,
-    };
-
-    // 206 的 Content-Length 是「剩余字节」，完整大小要加上已有断点
-    let head_len: u64 = resp
-        .headers()
-        .get(CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let total = match plan {
-        ResumePlan::Append => head_len + existing,
-        ResumePlan::Restart => head_len,
-    };
-    let mut downloaded = match plan {
-        ResumePlan::Append => existing,
-        ResumePlan::Restart => 0,
-    };
-    on_progress(downloaded, total);
-
+    let mut have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+    let mut total: Option<u64> = None;
     let mut buf = vec![0u8; 64 * 1024];
-    let mut since_emit = 0u64;
+
     loop {
         if cancel.load(Ordering::Relaxed) {
             return Err(AppError::msg("已取消"));
         }
-        let n = resp.read(&mut buf)?;
-        if n == 0 {
+        let end = have.saturating_add(SEGMENT - 1);
+        let mut resp = client
+            .get(url)
+            .header("Range", segment_range(have, end))
+            .send()
+            .map_err(|e| AppError::msg(format!("连接下载服务器失败：{e}（请检查网络后重试，会从断点继续）")))?;
+        let status = resp.status().as_u16();
+        if status == 416 {
+            // 请求区间越过文件末尾：说明 .part 已写到头（断点续传完成态）
             break;
         }
-        file.write_all(&buf[..n])?;
-        downloaded += n as u64;
-        since_emit += n as u64;
-        if since_emit >= 512 * 1024 {
-            on_progress(downloaded, total);
-            since_emit = 0;
+        if !resp.status().is_success() {
+            return Err(AppError::msg(format!("下载失败（HTTP {status}），请稍后重试")));
         }
+
+        let plan = resume_plan(have, status);
+        let mut file = match plan {
+            ResumePlan::Append => std::fs::OpenOptions::new().create(true).append(true).open(&part)?,
+            ResumePlan::Restart => {
+                // 服务器无视 Range 回了全量（或本地没有断点）：从头写
+                have = 0;
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&part)?
+            }
+        };
+
+        if total.is_none() {
+            // 206 时总大小只能从 Content-Range 尾段取（Content-Length 只是本段的量）；
+            // 200 时 Content-Length 就是总大小。取不到就保持未知，进度按字节显示
+            total = if status == 206 {
+                resp.headers()
+                    .get(reqwest::header::CONTENT_RANGE)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.rsplit('/').next())
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .filter(|t| *t > 0)
+            } else {
+                resp.headers()
+                    .get(CONTENT_LENGTH)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .filter(|t| *t > 0)
+            };
+        }
+        on_progress(have, total.unwrap_or(0));
+
+        let mut since_emit = 0u64;
+        let before = have;
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(AppError::msg("已取消"));
+            }
+            let n = resp.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            file.write_all(&buf[..n])?;
+            have += n as u64;
+            since_emit += n as u64;
+            if since_emit >= 512 * 1024 {
+                on_progress(have, total.unwrap_or(0));
+                since_emit = 0;
+            }
+        }
+        file.flush()?;
+        on_progress(have, total.unwrap_or(0));
+
+        if let Some(t) = total {
+            if have >= t {
+                break;
+            }
+        }
+        if have == before {
+            // 本段一个字节都没拿到（还没到文件末尾）：防住同区间空转死循环
+            return Err(AppError::msg("下载没有进展，请检查网络后重试（会从断点继续）"));
+        }
+        // 段结束，回到循环顶：检查取消、请求下一段
     }
-    file.flush()?;
-    on_progress(downloaded, total);
-    if total > 0 && downloaded != total {
-        return Err(AppError::msg(format!(
-            "下载不完整（{downloaded}/{total} 字节），请重试"
-        )));
+
+    if let Some(t) = total {
+        if have != t {
+            return Err(AppError::msg(format!("下载不完整（{have}/{t} 字节），请重试")));
+        }
     }
     std::fs::rename(&part, dest)?;
     Ok(())
@@ -251,7 +287,10 @@ pub fn safe_relative(p: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
-/// 解压 .tar.bz2 到 dest（保留可执行位等属性）
+/// 解压 .tar.bz2 到 dest（保留可执行位等属性）。
+/// 条目类型只放行普通文件与目录：link 条目（symlink/hardlink）的 target
+/// 不受 safe_relative 检查，先写链接再经它写文件就能逃出 dest（审查 P2-5；
+/// 官方模型归档只含普通文件与目录，实测解压通过）。
 pub fn extract_tar_bz2(archive: &Path, dest: &Path) -> AppResult<()> {
     std::fs::create_dir_all(dest)?;
     let f = std::fs::File::open(archive)?;
@@ -260,6 +299,14 @@ pub fn extract_tar_bz2(archive: &Path, dest: &Path) -> AppResult<()> {
     tar.set_preserve_permissions(true);
     for entry in tar.entries()? {
         let mut entry = entry?;
+        match entry.header().entry_type() {
+            tar::EntryType::Regular | tar::EntryType::Directory => {}
+            _ => {
+                return Err(AppError::msg(
+                    "语音包内容含非法条目（链接等），已中止（下载源可能被篡改）",
+                ));
+            }
+        }
         let rel = entry.path()?;
         let Some(rel) = safe_relative(&rel) else {
             return Err(AppError::msg("语音包内容含非法路径，已中止（下载源可能被篡改）"));
@@ -407,9 +454,9 @@ mod tests {
     }
 
     #[test]
-    fn range_value_format() {
-        assert_eq!(range_value(0), "bytes=0-");
-        assert_eq!(range_value(1234), "bytes=1234-");
+    fn segment_range_format() {
+        assert_eq!(segment_range(0, 8 * 1024 * 1024 - 1), "bytes=0-8388607");
+        assert_eq!(segment_range(8388608, 16777215), "bytes=8388608-16777215");
     }
 
     #[test]
@@ -453,8 +500,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 手工伪造含 `../evil.txt` 条目的 tar.bz2（tar-rs 的 Builder 造不出来，
-    /// 只能拼原始 512 字节头）：解压必须拒绝且不得把文件写到目录外。
+    /// 手工伪造 tar 头（tar-rs 的 Builder 造不出恶意条目，只能拼原始 512 字节）。
+    /// typeflag：b'0' 普通文件；b'2' 符号链接（linkname 在 157 偏移）。
+    fn raw_header(name: &str, size: u32, typeflag: u8, linkname: &str) -> [u8; 512] {
+        let mut header = [0u8; 512];
+        let name_bytes = name.as_bytes();
+        header[..name_bytes.len()].copy_from_slice(name_bytes);
+        header[100..108].copy_from_slice(b"0000644\0");
+        header[108..116].copy_from_slice(b"0000000\0");
+        header[116..124].copy_from_slice(b"0000000\0");
+        header[124..136].copy_from_slice(format!("{size:011o}\0").as_bytes());
+        header[136..148].copy_from_slice(b"00000000000\0");
+        let link = linkname.as_bytes();
+        if !link.is_empty() {
+            header[157..157 + link.len()].copy_from_slice(link);
+        }
+        header[156] = typeflag; // 必须先于校验和写入
+        let sum: u32 = header
+            .iter()
+            .enumerate()
+            .map(|(i, b)| if (148..156).contains(&i) { b' ' as u32 } else { *b as u32 })
+            .sum();
+        header[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+        header
+    }
+
+    /// 手工伪造含 `../evil.txt` 条目的 tar.bz2：解压必须拒绝且不得把文件写到目录外。
     #[test]
     fn extract_rejects_hand_crafted_traversal_entry() {
         let dir = tmp("evil");
@@ -462,23 +533,7 @@ mod tests {
         {
             let f = std::fs::File::create(&archive).unwrap();
             let mut enc = BzEncoder::new(f, Compression::fast());
-            // GNU tar 头：name[100] mode[8] uid[8] gid[8] size[12] mtime[12] chksum[8] type[1]
-            let mut header = [0u8; 512];
-            header[..11].copy_from_slice(b"../evil.txt");
-            header[100..108].copy_from_slice(b"0000644\0");
-            header[108..116].copy_from_slice(b"0000000\0");
-            header[116..124].copy_from_slice(b"0000000\0");
-            header[124..136].copy_from_slice(b"00000000003\0"); // size = 3 字节
-            header[136..148].copy_from_slice(b"00000000000\0");
-            header[156] = b'0'; // 普通文件（必须先于校验和写入）
-            // chksum：除 chksum 字段（按 8 个空格计）外逐字节求和
-            let sum: u32 = header
-                .iter()
-                .enumerate()
-                .map(|(i, b)| if (148..156).contains(&i) { b' ' as u32 } else { *b as u32 })
-                .sum();
-            header[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
-            enc.write_all(&header).unwrap();
+            enc.write_all(&raw_header("../evil.txt", 3, b'0', "")).unwrap();
             enc.write_all(b"bad").unwrap();
             enc.write_all(&[0u8; 1024]).unwrap(); // 结束块
             enc.finish().unwrap().flush().unwrap();
@@ -490,6 +545,28 @@ mod tests {
         assert!(err.contains("非法路径") || err.contains(".."), "报错要指向路径问题：{err}");
         assert!(!dir.join("evil.txt").exists(), "穿越目标绝不能被写出");
         assert!(!out.join("evil.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 审查 P2-5：symlink 条目自身的路径合法，但它的 target 不受路径检查——
+    /// 必须按条目类型直接拒绝（先写 evil -> /Users，再经 evil/ 写文件即可逃逸）。
+    #[test]
+    fn extract_rejects_symlink_entries() {
+        let dir = tmp("symlink");
+        let archive = dir.join("link.tar.bz2");
+        {
+            let f = std::fs::File::create(&archive).unwrap();
+            let mut enc = BzEncoder::new(f, Compression::fast());
+            enc.write_all(&raw_header("evil-link", 0, b'2', "/Users")).unwrap();
+            enc.write_all(&[0u8; 1024]).unwrap();
+            enc.finish().unwrap().flush().unwrap();
+        }
+        let out = dir.join("out");
+        let result = extract_tar_bz2(&archive, &out);
+        assert!(result.is_err(), "链接条目必须被拒");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("非法条目"), "报错要指明是条目类型问题：{err}");
+        assert!(!out.join("evil-link").exists(), "链接本身也不能落盘");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

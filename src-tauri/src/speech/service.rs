@@ -3,7 +3,7 @@
 //! 兜底是静默的（只打日志）：自动朗读跟着孩子翻词走，任何弹窗都会打断节奏；
 //! 真正的病因（语音包损坏等）在设置页「试听」时才显式暴露。
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::speech::{LocalVoice, Speaker};
 use crate::tts::models;
 use std::path::PathBuf;
@@ -33,21 +33,37 @@ impl SpeechService {
     }
 
     /// 朗读一句话。
-    /// - `forced`：设置页「试听」指定的模型，无视引擎设置（听的就是这个包）
-    /// - `engine` / `configured`：settings 里的 ttsEngine 与 ttsModelId
+    /// - `forced`：设置页「试听」指定的模型，无视引擎设置（听的就是这个包）；
+    ///   此路径**错误直接上抛**——试听的目的就是暴露语音包的毛病，静默兜底系统语音
+    ///   会让用户把系统声音误当语音包音色（审查 P1-2）
+    /// - `engine` / `configured`：settings 里的 ttsEngine 与 ttsModelId；
+    ///   自动朗读路径本地失败**静默兜底**系统语音，不打断孩子
     pub fn speak(&self, engine: &str, forced: Option<&str>, configured: Option<&str>, text: &str) -> AppResult<()> {
         let (use_local, model) = resolve(engine, forced, configured);
         if use_local {
+            // 本地要出声了，先停掉系统语音可能还在念的上一句（审查 P2-2：
+            // 本地引擎的 stop 只停本地音频线程，管不到 say 子进程 / SAPI）
+            self.system.stop();
             let Some(id) = model else {
+                if forced.is_some() {
+                    return Err(AppError::msg("还没有可用的语音包"));
+                }
                 eprintln!("引擎选了本地语音包但没有选择模型，走系统语音");
                 return self.system.speak(text);
             };
             if (self.ready)(id) {
                 match self.local.speak_model(id, text) {
                     Ok(()) => return Ok(()),
-                    // 最终兜底：本地合成失败（引擎坏了 / 合成异常）不打扰孩子，直接系统朗读
-                    Err(e) => eprintln!("本地朗读失败，已自动改用系统朗读：{e}"),
+                    Err(e) => {
+                        if forced.is_some() {
+                            return Err(e);
+                        }
+                        // 自动朗读的最终兜底：本地合成失败静默改系统朗读，不打扰孩子
+                        eprintln!("本地朗读失败，已自动改用系统朗读：{e}");
+                    }
                 }
+            } else if forced.is_some() {
+                return Err(AppError::msg("语音包还没准备好（可能未下载完成或已损坏）"));
             } else {
                 eprintln!("本地语音包未就绪（可能被删除或未下完），已自动改用系统朗读");
             }
@@ -85,13 +101,16 @@ mod tests {
     struct CountingSystem {
         ok: bool,
         calls: AtomicUsize,
+        stops: AtomicUsize,
     }
     impl Speaker for CountingSystem {
         fn speak(&self, _text: &str) -> AppResult<()> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             if self.ok { Ok(()) } else { Err(AppError::msg("系统也失败")) }
         }
-        fn stop(&self) {}
+        fn stop(&self) {
+            self.stops.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
     struct CountingLocal {
@@ -114,7 +133,11 @@ mod tests {
     }
 
     fn service(local_fail: bool, ready: bool) -> (SpeechService, Arc<CountingSystem>, Arc<CountingLocal>) {
-        let system = Arc::new(CountingSystem { ok: true, calls: AtomicUsize::new(0) });
+        let system = Arc::new(CountingSystem {
+            ok: true,
+            calls: AtomicUsize::new(0),
+            stops: AtomicUsize::new(0),
+        });
         let local = Arc::new(CountingLocal { fail: local_fail, calls: std::sync::Mutex::new(vec![]) });
         (
             SpeechService {
@@ -176,6 +199,39 @@ mod tests {
         svc.speak("system", Some("kokoro-int8-v1.1"), Some("matcha-zh-baker"), "词").unwrap();
         assert_eq!(sys.calls.load(Ordering::SeqCst), 0);
         assert_eq!(*loc.calls.lock().unwrap(), vec!["kokoro-int8-v1.1".to_string()]);
+    }
+
+    /// 审查 P1-2：试听路径的本地失败必须上抛（用户要据此判断语音包好坏），不兜底
+    #[test]
+    fn forced_failure_propagates_instead_of_fallback() {
+        let (svc, sys, loc) = service(true, true);
+        let err = svc
+            .speak("system", Some("kokoro-int8-v1.1"), None, "词")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("本地合成失败"), "错误要透传：{err}");
+        assert_eq!(sys.calls.load(Ordering::SeqCst), 0, "试听失败不许兜底系统语音");
+        assert_eq!(loc.calls.lock().unwrap().len(), 1);
+    }
+
+    /// 试听一个未就绪的包：直接报错（自动朗读路径才静默兜底）
+    #[test]
+    fn forced_not_ready_propagates() {
+        let (svc, sys, loc) = service(false, false);
+        assert!(svc.speak("system", Some("melo-zh-en"), None, "词").is_err());
+        assert_eq!(sys.calls.load(Ordering::SeqCst), 0);
+        assert!(loc.calls.lock().unwrap().is_empty());
+    }
+
+    /// 审查 P2-2：走本地前要停系统正在念的上一句，避免双声重叠
+    #[test]
+    fn local_path_stops_system_first() {
+        let (svc, sys, _loc) = service(false, true);
+        svc.speak("local", None, Some("matcha-zh-baker"), "词").unwrap();
+        assert_eq!(sys.stops.load(Ordering::SeqCst), 1, "本地出声前先停系统");
+        // 系统引擎路径不需要预停（SystemSpeaker::speak 自带先停上一句）
+        svc.speak("system", None, None, "词").unwrap();
+        assert_eq!(sys.stops.load(Ordering::SeqCst), 1);
     }
 
     #[test]

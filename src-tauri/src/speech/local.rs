@@ -10,15 +10,23 @@ use crate::error::{AppError, AppResult};
 use crate::tts::models::{self, ModelSpec};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 
 /// 缓存上限（字节）。一段词约 100~300KB，64MB 足够几百个词
 const CACHE_LIMIT: u64 = 64 * 1024 * 1024;
 
+/// 播放请求带世代号：快速翻词时合成完成顺序会乱（缓存命中毫秒级、
+/// 首次建引擎数秒），旧请求的音频到达时若已有更新的请求 / stop，直接丢弃
 enum PlayMsg {
-    Play { samples: Vec<f32>, rate: u32 },
-    Stop,
+    Play { seq: u64, samples: Vec<f32>, rate: u32 },
+    Stop { seq: u64 },
+}
+
+/// 过期判定（纯函数便于单测）：只有不早于当前最新世代的消息才生效
+fn is_current(latest: u64, seq: u64) -> bool {
+    seq >= latest
 }
 
 pub struct LocalTts {
@@ -26,6 +34,7 @@ pub struct LocalTts {
     /// 已加载引擎（模型 id + 引擎）。换模型 / 删除模型后自动重建
     engine: Mutex<Option<(&'static str, Arc<sherpa_onnx::OfflineTts>)>>,
     sender: Sender<PlayMsg>,
+    seq: AtomicU64,
 }
 
 impl LocalTts {
@@ -39,7 +48,12 @@ impl LocalTts {
             data_dir,
             engine: Mutex::new(None),
             sender: tx,
+            seq: AtomicU64::new(0),
         }
+    }
+
+    fn next_seq(&self) -> u64 {
+        self.seq.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     /// 取指定模型的引擎；模型变了（换语音包 / 删除重装）就丢弃旧引擎重建。
@@ -90,8 +104,8 @@ impl LocalTts {
         Ok((samples, rate))
     }
 
-    fn play(&self, samples: Vec<f32>, rate: u32) {
-        let _ = self.sender.send(PlayMsg::Play { samples, rate });
+    fn play(&self, seq: u64, samples: Vec<f32>, rate: u32) {
+        let _ = self.sender.send(PlayMsg::Play { seq, samples, rate });
     }
 }
 
@@ -103,30 +117,42 @@ impl crate::speech::LocalVoice for LocalTts {
         if !models::is_installed(spec, &self.data_dir) {
             return Err(AppError::msg("语音包还没下载完成"));
         }
-        // 先停上一句，再合成（合成期间静音比播放旧句再打断更符合「翻词」节奏）
+        // 先停上一句（占住世代号），再合成：合成期间若有新的朗读 / stop，
+        // 世代号被推进，这次合成的结果到达音频线程时会被丢弃
         self.stop();
+        let seq = self.next_seq();
         let (samples, rate) = self.synth(spec, text)?;
-        self.play(samples, rate);
+        self.play(seq, samples, rate);
         Ok(())
     }
 
     fn stop(&self) {
-        let _ = self.sender.send(PlayMsg::Stop);
+        let seq = self.next_seq();
+        let _ = self.sender.send(PlayMsg::Stop { seq });
     }
 }
 
 /// 音频线程：持有设备句柄（rodio 0.23：`MixerDeviceSink`，drop 即停声），
-/// 创建失败不退出线程，下次播放再试。「先停上一句」= 丢弃当前 `Player`。
+/// 创建失败不退出线程，下次播放再试。「先停上一句」= 丢弃当前 `Player`；
+/// 过期消息（快速翻词时旧合成后到、stop 之后才完成的合成）直接丢弃。
 fn audio_loop(rx: mpsc::Receiver<PlayMsg>) {
     let mut device: Option<rodio::MixerDeviceSink> = None;
     // Player 只是为了「持有期间继续播放、丢弃时停止」，不读它的内容
     let mut current: Option<rodio::Player> = None;
+    let mut latest: u64 = 0;
     for msg in rx {
+        let seq = match &msg {
+            PlayMsg::Play { seq, .. } | PlayMsg::Stop { seq } => *seq,
+        };
+        if !is_current(latest, seq) {
+            continue; // 过期请求：比它新的朗读或 stop 已经发生
+        }
+        latest = seq;
         match msg {
-            PlayMsg::Stop => {
+            PlayMsg::Stop { .. } => {
                 drop(current.take()); // drop Player 即停止这条音轨
             }
-            PlayMsg::Play { samples, rate } => {
+            PlayMsg::Play { samples, rate, .. } => {
                 drop(current.take()); // 先停上一句
                 if device.is_none() {
                     match rodio::DeviceSinkBuilder::open_default_sink() {
@@ -225,6 +251,15 @@ fn enforce_cache_limit(dir: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 审查 P2-3 的核心判定：过期世代的消息必须被丢弃
+    #[test]
+    fn stale_generation_messages_are_dropped() {
+        assert!(is_current(0, 1), "第一条消息生效");
+        assert!(!is_current(5, 3), "比最新世代旧的丢弃（快速翻词时旧合成后到）");
+        assert!(is_current(5, 5), "同世代不丢（Stop 后紧跟的同号不被误伤）");
+        assert!(is_current(5, 9), "更新的消息生效");
+    }
 
     #[test]
     fn cache_key_is_stable_and_sensitive() {

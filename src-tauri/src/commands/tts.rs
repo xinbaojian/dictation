@@ -54,10 +54,14 @@ pub fn download_tts_model(
     let cancel = state.tts.start(&id)?;
     let data_dir = state.data_dir.clone();
     let registry = state.tts.clone();
-    std::thread::Builder::new()
+    let started = std::thread::Builder::new()
         .name(format!("tts-download-{id}"))
-        .spawn(move || download::run(app, spec, cancel, data_dir, registry))
-        .map_err(|e| AppError::msg(format!("启动下载失败：{e}")))?;
+        .spawn(move || download::run(app, spec, cancel, data_dir, registry));
+    if let Err(e) = started {
+        // 注册表已登记，线程没起来：必须撤销，否则之后所有下载都报「已有任务」（审查 P2-4）
+        state.tts.finish(&id);
+        return Err(AppError::msg(format!("启动下载失败：{e}")));
+    }
     Ok(())
 }
 

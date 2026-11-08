@@ -477,7 +477,15 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
           </div>
         </section>
 
-        <TtsSettings notify={notify} />
+        <TtsSettings
+          notify={notify}
+          onSaved={(s) => {
+            // TtsSettings 的「立即保存」落库后，把朗读两个字段合并进本页的表单与
+            // 已保存快照——否则顶部「保存设置」/ 各开关用旧快照全量保存时会覆盖回去
+            setValue((v) => (v ? { ...v, ttsEngine: s.ttsEngine, ttsModelId: s.ttsModelId } : s));
+            setSavedValue((v) => (v ? { ...v, ttsEngine: s.ttsEngine, ttsModelId: s.ttsModelId } : s));
+          }}
+        />
 
         <AiSettings notify={notify} />
 

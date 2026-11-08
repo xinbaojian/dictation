@@ -4,16 +4,21 @@ import ConfirmModal from "./ConfirmModal";
 import { api, errorMessage } from "../lib/ipc";
 import type { Settings, TtsDownloadEvent, TtsModelView } from "../types";
 
-/** 设置页「朗读语音」区块（ADR-21）：朗读引擎二选一 + 语音包按需下载。
+/**
+ * 设置页「朗读语音」区块（ADR-21）：朗读引擎二选一 + 语音包按需下载。
  *
  *  - 引擎与所选模型点了立即保存（与「自动朗读」开关同一交互习惯，不走上方「保存设置」）
  *  - 语音包不随安装包：从这里下载到数据目录 tts-model/，一次下载永久离线
  *  - 本地引擎缺模型 / 合成失败时后端自动兜底回系统朗读，这里只做提示
+ *  - onSaved：把立即保存的结果回传父页面——设置页顶部的「保存设置」与各开关
+ *    以挂载时的设置快照为基线全量保存，不同步会把引擎选择静默覆盖回旧值（审查 P1-1）
  */
 export default function TtsSettings({
   notify,
+  onSaved,
 }: {
   notify: (kind: "ok" | "error", text: string) => void;
+  onSaved: (s: Settings) => void;
 }) {
   // 已保存的引擎设置（与设置页其它「立即保存」开关同源：都以后端为准）
   const [engine, setEngine] = useState<"system" | "local">("system");
@@ -82,6 +87,8 @@ export default function TtsSettings({
       const saved = await api.saveSettings(cfg);
       setEngine(saved.ttsEngine === "local" ? "local" : "system");
       setModelId(saved.ttsModelId ?? null);
+      // 同步回父页面：顶部「保存设置」与各开关都用旧快照全量保存，漏了这步会覆盖回旧值
+      onSaved(saved);
       notify(
         "ok",
         saved.ttsEngine === "local" ? "朗读已切换到本地语音包" : "朗读已切换回系统语音",
@@ -94,6 +101,14 @@ export default function TtsSettings({
   const download = async (id: string) => {
     try {
       await api.downloadTtsModel(id);
+      // 立即占住按钮（审查 P2-6）：TCP/TLS 建立的 1~3 秒空窗里再点会弹「已有任务」
+      setModels((prev) =>
+        prev.map((m) =>
+          m.id === id
+            ? { ...m, downloading: { modelId: id, phase: "downloading", downloaded: 0, total: 0 } }
+            : m,
+        ),
+      );
     } catch (e) {
       notify("error", errorMessage(e));
     }
