@@ -1,8 +1,9 @@
 name: Release
 
 # 打 tag（形如 v0.1.0）推到 GitHub 时，自动构建并发布所有平台的安装包：
-#   Windows：NSIS .exe（x64 / x86-32位 / arm64）
-#   macOS  ：universal .dmg（x64 + arm64；Apple 已不支持 32 位，故无 32 位包）
+#   Windows：NSIS .exe（x64 / arm64；2026-11-08 起不再出 32 位包——
+#            sherpa-onnx 预编译库没有 win-x86 架构，本地 TTS 语音包无法链接）
+#   macOS  ：universal .dmg（x64 + arm64 双架构合一；Apple 已不支持 32 位）
 #   Linux  ：.deb + AppImage 通用包（x86_64 / aarch64；32 位 Linux 因系统已无 i386 桌面库，无法构建）
 #
 # 同时产出自动升级所需的签名产物（*.sig / macOS 的 *.app.tar.gz）与 latest.json。
@@ -17,7 +18,7 @@ permissions:
   contents: write
 
 jobs:
-  # ---------- Windows：NSIS 安装包（x64 / x86 / arm64） ----------
+  # ---------- Windows：NSIS 安装包（x64 / arm64） ----------
   build-windows:
     name: Windows (${{ matrix.target }})
     runs-on: windows-latest
@@ -27,7 +28,6 @@ jobs:
       matrix:
         target:
           - x86_64-pc-windows-msvc
-          - i686-pc-windows-msvc
           - aarch64-pc-windows-msvc
     steps:
       - name: Checkout
@@ -118,7 +118,7 @@ jobs:
 
   # ---------- Linux：.deb + AppImage（x86_64 原生 / aarch64 原生 ARM runner） ----------
   # 说明：Ubuntu 22.04 起已裁撤 i386 桌面库（webkit2gtk / gtk 无 32 位开发包），
-  # 无法构建 32 位 Linux 包；32 位覆盖由 Windows i686 提供。
+  # 无法构建 32 位 Linux 包。全平台 32 位于 2026-11-08 起停止支持（见 Windows 段注释）。
   build-linux:
     name: Linux (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
@@ -139,7 +139,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev build-essential curl wget file \
-            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
+            libasound2-dev
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

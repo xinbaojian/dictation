@@ -23,9 +23,9 @@ if (!/^v\d+\.\d+\.\d+[\w.-]*$/.test(tag ?? "")) {
 
 // artifact 目录名 -> updater 的 OS-ARCH 键；.app.tar.gz 是 macOS 的更新包（不是 .dmg），
 // universal 包同时供 Intel 和 Apple Silicon 使用，所以一个 .sig 写两个键。
+// Windows 32 位（i686）已下线：sherpa-onnx 无 win-x86 预编译库（2026-11-08，ADR-21）。
 const PLATFORMS = [
   { dir: "win-x86_64-pc-windows-msvc", keys: ["windows-x86_64"], sig: /\.exe\.sig$/i },
-  { dir: "win-i686-pc-windows-msvc", keys: ["windows-i686"], sig: /\.exe\.sig$/i },
   { dir: "win-aarch64-pc-windows-msvc", keys: ["windows-aarch64"], sig: /\.exe\.sig$/i },
   { dir: "macos", keys: ["darwin-x86_64", "darwin-aarch64"], sig: /\.app\.tar\.gz\.sig$/i },
   { dir: "linux-x86_64-unknown-linux-gnu", keys: ["linux-x86_64"], sig: /\.AppImage\.sig$/i },

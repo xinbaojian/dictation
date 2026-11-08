@@ -67,7 +67,9 @@ make release v0.2.2
 }
 ```
 
-- 平台键是 `OS-ARCH`（`windows-x86_64/i686/aarch64`、`darwin-x86_64/aarch64`、`linux-x86_64/aarch64`）。
+- 平台键是 `OS-ARCH`（`windows-x86_64/aarch64`、`darwin-x86_64/aarch64`、`linux-x86_64/aarch64`）。
+  Windows 32 位（i686）已于 2026-11-08 下线（sherpa-onnx 无 win-x86 预编译库，见 ADR-21）；
+  旧的 32 位安装将停留在 0.7.x 不再收到升级。
   macOS universal 一份 `.app.tar.gz` 写两个键；updater 插件先找 `{os}-{arch}-{bundle_type}`
   再回退 `{os}-{arch}`，所以裸 `darwin-aarch64` 键能用。
 - 各平台的更新包：Windows = NSIS `.exe`、macOS = `.app.tar.gz`（**不是 .dmg**）、Linux = `.AppImage`；
