@@ -19,6 +19,7 @@ import type {
   SyncConfig,
   SyncOutcome,
   SyncStatus,
+  TtsModelView,
   Word,
   WrongMark,
 } from "../types";
@@ -108,10 +109,19 @@ export const api = {
   appVersion: () => invoke<string>("app_version"),
   /** 重启后当前进程立刻退出，invoke 会抛错，调用方需忽略 */
   restartApp: () => invoke<void>("restart_app"),
-  /** 系统离线语音朗读（笔画复习页读词）；异步启动，再次调用会先停上一句 */
-  speakText: (text: string) => invoke<void>("speak_text", { text }),
+  /** 朗读一段文本；引擎由设置决定（系统 / 本地语音包，本地失败自动兜底系统）。
+   *  modelId 供设置页「试听」指定语音包，忽略当前引擎设置 */
+  speakText: (text: string, modelId?: string | null) =>
+    invoke<void>("speak_text", { text, modelId: modelId ?? null }),
   /** 停止当前朗读（翻词 / 退出复习页时调用） */
   stopSpeak: () => invoke<void>("stop_speak"),
+
+  // 语音包（ADR-21）：模型不随安装包，按需下载到数据目录，断网永久可用
+  listTtsModels: () => invoke<TtsModelView[]>("list_tts_models"),
+  /** 启动后台下载后立即返回；进度经 tts-download-progress 事件推送 */
+  downloadTtsModel: (id: string) => invoke<void>("download_tts_model", { id }),
+  cancelTtsDownload: (id: string) => invoke<void>("cancel_tts_download", { id }),
+  deleteTtsModel: (id: string) => invoke<void>("delete_tts_model", { id }),
 
   // AI 讲解卡（默认关闭；配置了 .ai-config.json 才会联网）
   getAiConfig: () => invoke<AiConfigView>("get_ai_config"),

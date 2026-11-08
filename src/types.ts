@@ -115,6 +115,31 @@ export interface Settings {
   autoCheckUpdates: boolean;
   /** 笔画复习页翻到每个词时是否自动朗读（默认关闭）；页内开关与设置页共用 */
   strokeAutoSpeak: boolean;
+  /** 朗读引擎："system"（系统离线语音，默认）| "local"（本地语音包，ADR-21） */
+  ttsEngine: "system" | "local";
+  /** 本地引擎使用的语音包 id（未选择 / 不在目录内为 null，此时兜底系统语音） */
+  ttsModelId: string | null;
+}
+
+/** 设置页「语音包」卡片（对齐 Rust commands::tts::TtsModelView） */
+export interface TtsModelView {
+  id: string;
+  name: string;
+  description: string;
+  sizeMb: number;
+  licenseNote: string | null;
+  installed: boolean;
+  /** 进行中的下载快照（页面刷新后恢复进度条） */
+  downloading: { modelId: string; phase: string; downloaded: number; total: number } | null;
+}
+
+/** tts-download-progress 事件载荷（对齐 Rust tts::download::DownloadEvent） */
+export interface TtsDownloadEvent {
+  modelId: string;
+  phase: "downloading" | "extracting" | "done" | "error" | "canceled";
+  downloaded: number;
+  total: number;
+  message?: string;
 }
 
 /** AI 讲解卡内容（对齐 Rust domain::ai_card::CardContent） */

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import ConfirmModal from "../components/ConfirmModal";
 import Markdown from "../components/Markdown";
 import AiSettings from "../components/AiSettings";
+import TtsSettings from "../components/TtsSettings";
 import { Toast, useNotice } from "../components/Toast";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorMessage } from "../lib/ipc";
@@ -441,7 +442,8 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
             <div>
               <h2 className="text-sm font-medium text-stone-700">笔画复习</h2>
               <p className="mt-1 text-xs text-stone-500">
-                错题本的「复习笔画」页：翻到每个词用系统语音读一遍，孩子照读音默写
+                错题本的「复习笔画」页：翻到每个词朗读一遍，孩子照读音默写
+                （朗读声音在下方「朗读语音」区选择）
               </p>
             </div>
           </div>
@@ -474,6 +476,8 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
             </button>
           </div>
         </section>
+
+        <TtsSettings notify={notify} />
 
         <AiSettings notify={notify} />
 
