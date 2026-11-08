@@ -44,33 +44,34 @@ impl SpeechService {
             // 本地要出声了，先停掉系统语音可能还在念的上一句（审查 P2-2：
             // 本地引擎的 stop 只停本地音频线程，管不到 say 子进程 / SAPI）
             self.system.stop();
-            let Some(id) = model else {
-                if forced.is_some() {
-                    return Err(AppError::msg("还没有可用的语音包"));
-                }
-                eprintln!("引擎选了本地语音包但没有选择模型，走系统语音");
-                return self.system.speak(text);
-            };
-            if (self.ready)(id) {
-                match self.local.speak_model(id, text) {
-                    Ok(()) => return Ok(()),
-                    Err(e) => {
-                        if forced.is_some() {
-                            return Err(e);
+            match model {
+                Some(id) => {
+                    if (self.ready)(id) {
+                        match self.local.speak_model(id, text) {
+                            Ok(()) => return Ok(()),
+                            Err(e) => {
+                                if forced.is_some() {
+                                    return Err(e);
+                                }
+                                // 自动朗读的最终兜底：本地合成失败静默改系统朗读，不打扰孩子
+                                eprintln!("本地朗读失败，已自动改用系统朗读：{e}");
+                            }
                         }
-                        // 自动朗读的最终兜底：本地合成失败静默改系统朗读，不打扰孩子
-                        eprintln!("本地朗读失败，已自动改用系统朗读：{e}");
+                    } else if forced.is_some() {
+                        return Err(AppError::msg("语音包还没准备好（可能未下载完成或已损坏）"));
+                    } else {
+                        eprintln!("本地语音包未就绪（可能被删除或未下完），已自动改用系统朗读");
                     }
                 }
-            } else if forced.is_some() {
-                return Err(AppError::msg("语音包还没准备好（可能未下载完成或已损坏）"));
-            } else {
-                eprintln!("本地语音包未就绪（可能被删除或未下完），已自动改用系统朗读");
+                None if forced.is_some() => return Err(AppError::msg("还没有可用的语音包")),
+                None => eprintln!("引擎选了本地语音包但没有选择模型，走系统语音"),
             }
-        } else {
-            // 系统要出声了，对称地停掉本地可能还在播的试听（审查二轮 #2）
-            self.local.stop();
+            // 各兜底路径落到统一出口，由系统语音出声
         }
+        // 统一出口：凡是要系统出声，先停掉本地可能在播的音频
+        // （纯系统路径、以及 use_local=true 但没配模型 / 未就绪 / 合成失败的兜底路径，
+        //   三轮审查 #遗留：兜底路径此前漏停本地会造成短暂双声）
+        self.local.stop();
         self.system.speak(text)
     }
 
@@ -234,17 +235,22 @@ mod tests {
     }
 
     /// 审查 P2-2：走本地前要停系统正在念的上一句，避免双声重叠；
-    /// 审查二轮 #2：系统路径对称地停本地（试听切回复习页的场景）
+    /// 审查二轮 #2 / 三轮遗留：凡由系统出声（含 use_local 的各兜底路径）都先停本地
     #[test]
     fn local_path_stops_system_first() {
         let (svc, sys, loc) = service(false, true);
         svc.speak("local", None, Some("matcha-zh-baker"), "词").unwrap();
         assert_eq!(sys.stops.load(Ordering::SeqCst), 1, "本地出声前先停系统");
-        assert_eq!(loc.stops.load(Ordering::SeqCst), 0, "本地路径不用停自己（speak_model 内部已停）");
-        // 系统引擎路径要停掉本地可能还在播的试听
+        assert_eq!(loc.stops.load(Ordering::SeqCst), 0, "本地成功路径不经过统一出口");
+        // 纯系统路径：停本地可能还在播的试听
         svc.speak("system", None, None, "词").unwrap();
         assert_eq!(sys.stops.load(Ordering::SeqCst), 1, "系统 speak 自带先停上一句");
         assert_eq!(loc.stops.load(Ordering::SeqCst), 1, "系统出声前停本地");
+        // 兜底路径（本地失败落系统）同样要停本地
+        let (svc2, sys2, loc2) = service(true, true);
+        svc2.speak("local", None, Some("matcha-zh-baker"), "词2").unwrap();
+        assert_eq!(sys2.calls.load(Ordering::SeqCst), 1, "失败兜底系统出声");
+        assert_eq!(loc2.stops.load(Ordering::SeqCst), 1, "兜底出口也停本地");
     }
 
     #[test]
