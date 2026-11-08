@@ -36,7 +36,7 @@ related: [architecture.md, decisions.md]
 | 错题本 | `pages/Mistakes.tsx` | 分组筛选、连对进度条（读设置）、专项默写（**点击后先确认再开**，防误点）、打印、**手工加词并点字标错**（`AddMistakeModal`）、**进笔画复习（点词语直接从该词开始，路由带 `wordId`）** |
 | 笔画复习 | `pages/StrokeReview.tsx` | 逐词看笔顺动画（`components/StrokeWord.tsx` + `lib/strokes.ts`）、每字一个田字格、田字格上方逐字拼音（`lib/pinyin.ts`，多音字按词消歧，仅此页）、点格子只重播该字、「先自己写」遮住笔画后再对照、系统离线语音朗读（自动+手动，偏好记忆）、AI 巧记讲解卡（`components/MnemonicCard.tsx`，配置 AI 后可按需生成，遮蔽模式整卡隐藏，展开可自动读口诀）、空格/←/R 快捷键、可从指定词开始（错题本点词语；找不到时从头开始） |
 | 记录 | `pages/History.tsx` | 50 条列表 + 详情弹窗 + 只练本次错词 + 单条删除 |
-| 设置 | `pages/Settings.tsx` | 遮罩/连对/字号、备份导出导入、打开数据目录（连字已挪到抽题页的抽词偏好）、AI 讲解配置区块 |
+| 设置 | `pages/Settings.tsx` | 遮罩/连对/字号、备份导出导入、打开数据目录（连字已挪到抽题页的抽词偏好）、AI 讲解配置区块、朗读语音区块（`components/TtsSettings.tsx`：引擎切换 + 语音包下载/试听/删除，ADR-21） |
 | 词表 | `pages/Wordbook.tsx` | 分组树（可折叠、默认全部折叠、**可拖动调整层级与顺序**）、词数/错题/最近练习、行内编辑、粘贴导入、标记错题 |
 | 打印 / 字帖 | `pages/PrintSheet.tsx` | A4 字帖：每行一个词横向排满（示范字 → 描红 → 空格），可选方格（田 / 米 / 方）、大小（10 / 12 / 14mm）、描红遍数（0 / 1 / 2）、抄写单 ↔ 默写单；选项存 localStorage（`printSheet.options`） |
 | 口算练习 | `pages/math/MathSheet.tsx` | 左侧条件面板（留空位置 / 两步运算符 / 四位置取值区间 / 答案显隐，选项存 localStorage）、A4 满幅卷面（3×10 格 + 可裁剪答案条 + 口诀示范条 `example.ts`）、出题走 `generate_math_sheet` 命令（区间默认 = 三段难度，自定义 = 单池平铺，见 `domain/math.rs`） |

@@ -1,13 +1,26 @@
 ---
-title: 本地开源 TTS 语音包（调研留档，暂缓开发）
-updated: 2026-11-07
-tags: [tts, research, roadmap]
+title: 本地开源 TTS 语音包
+updated: 2026-11-08
+tags: [tts, adr-21]
 related: [decisions.md, frontend.md, updater.md]
 ---
 
-# 本地开源 TTS 语音包（调研留档，暂缓开发）
+# 本地开源 TTS 语音包
 
-**状态：2026-11-07 调研完成，暂缓开发。** 若 Phase 2（云端在线 TTS，见 ADR-20 边界段）落地后仍有离线高音质需求，按本页结论接入。
+**状态：2026-11-08 已落地（ADR-21）。** 模型不打包、设置页按需下载、系统朗读兜底；本页调研结论已实现，历史调研记录留档在下方。
+
+## 实现后的实际形状（与调研的差异）
+
+- ~~`sherpa-rs`~~：社区 crate 已废弃，改用**官方 `sherpa-onnx` crate 2.0.1**（静态链接预编译库，无需 cmake）
+- 语音包目录 4 个（kokoro-int8-v1.1 / matcha-zh-baker+vocos / melo-zh-en / kokoro-v1.1），aishell3（8kHz）与 fanchen-C（HF-only 国内难访问）未上目录
+- 播放管线：rodio（独立音频线程）+ 按内容哈希缓存 `tts-cache/`（64MB 淘汰），未等 Phase 2 直接建好
+- 多音字 pinyin-pro 校正暂不做（`GenerationConfig.tokens` 已支持拼音输入，是将来挂钩点）；端到端验收用忽略测试 `kokoro_int8_end_to_end`
+
+---
+
+## 调研留档（2026-11-07，暂缓开发时的结论）
+
+**状态（2026-11-07 时）：调研完成，暂缓开发。** 若 Phase 2（云端在线 TTS，见 ADR-20 边界段）落地后仍有离线高音质需求，按本页结论接入。（2026-11-08 已按此结论实现，见上方与 ADR-21。）
 
 ## 一句话结论
 

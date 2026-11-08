@@ -150,3 +150,15 @@ related: [overview.md, quiz-flow.md]
 - **红线**：LLM 只产内容，**永不写学习进度**（`word_progress` 不变，讲解不是进度）；输出必须过 `domain/ai_card.rs::validate`（术语黑名单、例句含目标词、长度上限、无换行）才入库；讲解卡在「先自己写」遮蔽模式下整卡隐藏（口诀=答案提示）；面向孩子的内容层（积木/口诀/例句）与给家长的辨析层分开呈现
 - **实现**：`commands/ai.rs` 六命令（生成走「拿锁读词→放锁等 HTTP→拿锁落库」，`MutexGuard` 不跨 await）；`ai/config.rs` + `ai/client.rs`（reqwest rustls，30s 超时，校验失败回喂重试一次）；词文本被编辑时清卡（对齐 ADR-16 清手工错字的先例）；新依赖仅 `reqwest`
 - **边界**：Phase 2 在线 TTS（智谱 GLM-TTS 等，`/audio/speech`）将复用同一配置文件与 opt-in 边界，届时另立 ADR-21 修订 ADR-19 的「不引联网引擎」
+
+## ADR-21 本地 TTS 语音包：运行时随包、模型按需下载，系统朗读兜底
+
+- **结论**：朗读引擎二选一（设置项 `ttsEngine`，默认 `system`）：系统离线语音（ADR-19，不变）或**本地语音包**。sherpa-onnx **运行时**静态链接进安装包；**模型本体不打包**，在设置页「朗读语音」区按需从 k2-fsa/sherpa-onnx 的 GitHub Releases 下载（与自动升级同一下载通道，支持 `.part` 断点续传），存数据目录 `tts-model/<id>/`，一次下载永久离线
+- **理由**：系统语音音质参差（Windows 中文 SAPI 尤其机械）；本地开源 TTS 音质好且离线，但 73~330MB 的模型塞进安装包违背「绿色便携」。按需下载让默认安装体积几乎不变，想要好声音的家庭自己下（调研见 [tts-local-models.md](./tts-local-models.md)）
+- **选型**：社区 `sherpa-rs` 已废弃，用官方 `sherpa-onnx` crate 2.0.1（静态链接，build.rs 自动下载平台预编译库，无需 cmake，可用 `SHERPA_ONNX_ARCHIVE_DIR` 离线覆盖）；播放用 `rodio`（cpal，f32 样本缓冲直放）；解压用 `bzip2` + `tar`（tar 条目显式拒绝 `..`/绝对路径）
+- **兜底（核心语义）**：引擎选 `local` 但模型缺失 / 引擎创建失败 / 合成失败时，**自动静默落回系统朗读**——自动朗读跟着孩子翻词走，任何弹窗都打断节奏；真正的病因在设置页「试听」时显式暴露。两种引擎的 `stop` 都会停
+- **语音包目录**（`tts/models.rs` 常量表）：kokoro-int8-v1.1（约 120MB，推荐，int8 的模型文件名是 `model.int8.onnx`）、matcha-zh-baker（73MB + 51MB vocoder，最快，数据集非商用已在 UI 注明）、melo-zh-en（163MB 中英混读）、kokoro-v1.1 完整版（330MB）；默认音色取 kokoro v1.1 中文女声 sid 3（zf_001，**v1.1 的音色表与 v1.0 完全不同**，中文女声是 sid 3-57）；aishell3（8kHz 音质差）与 fanchen-C（只在 HuggingFace，国内难访问）不上目录。归档清单以 2026-11-08 实测为准，PoC 端到端测试 `kokoro_int8_end_to_end`（默认忽略）守护一致性
+- **管线**：合成走 `spawn_blocking`，引擎按模型懒加载后常驻（`Arc<OfflineTts>`）；合成结果按 `sha256(模型|音色|文本)` 缓存为 `tts-cache/*.wav`（64MB 上限按 mtime 淘汰），复习页反复读同一个词秒回；播放在独立音频线程（rodio 设备句柄不跨线程），「先停上一句」= 丢弃当前 `Player`
+- **设置与同步**：`ttsEngine` / `ttsModelId` 存 settings（本机偏好，整库拉取替换时留在本机，ADR-17 既有机制）；换机器没有模型文件 → 自动兜底系统语音，不算错误
+- **代价**：安装包增大（静态链 sherpa-onnx + onnxruntime，实测约 +20~30MB）；首次本地朗读要加载模型（1~3 秒，之后常驻）；不做归档 sha256 校验（引擎创建失败即兜底并报错，发布源是官方 GitHub）
+- **修订**：ADR-19「不引联网引擎」仍然成立——本 ADR 是离线引擎的升级，云端在线 TTS（Phase 2）将来另立 ADR；`GenerationConfig.tokens` 已支持拼音预分词输入，将来若多音字不准可接 `lib/pinyin.ts` 校正（本次不做，先按 wiki 验收路径试听全词表）

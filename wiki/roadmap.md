@@ -29,7 +29,7 @@ related: [overview.md, decisions.md, sync.md]
 4. **数据看板**：每周错词趋势、分组掌握率。依赖 `session_items` 已有数据，纯前端统计
 5. **错题本按错误次数分组复习**（连错 3 次以上的重点练）
 6. **同步体验**：启动自动拉取 / 退出自动推送、云端快照历史回滚（当前是手动 + 重启生效）
-7. **本地开源 TTS 语音包**：sherpa-onnx + 中文语音模型，下载一次永久离线（[tts-local-models.md](./tts-local-models.md)，2026-11-07 调研完成、暂缓开发，依赖 Phase 2 在线 TTS 的三选一设置先行）
+7. ~~**本地开源 TTS 语音包**~~ 已实现（ADR-21，2026-11-08）：sherpa-onnx 运行时随包、模型按需下载、系统朗读兜底（[tts-local-models.md](./tts-local-models.md)）
 
 ## 明确不做
 

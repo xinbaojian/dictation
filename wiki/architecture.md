@@ -30,7 +30,8 @@ React 页面 ──invoke──> commands/*.rs ──> repo/*.rs ──> rusqlit
 |---|---|
 | `db: Mutex<Connection>` | 单连接 + WAL。单机单用户，不需要连接池 |
 | `data_dir: PathBuf` | 程序同级目录（不可写则回落 `app_data_dir()`），库、备份与同步状态都放这里 |
-| `speaker: Arc<dyn Speaker>` | TTS 预留位，V1 注入 `NullSpeaker` |
+| `speech: SpeechService` | 朗读路由（ADR-21）：系统语音 / 本地语音包二选一，本地缺失或失败自动兜底系统 |
+| `tts: Arc<Downloads>` | 语音包下载注册表：全局同时只允许一个任务，快照供设置页恢复进度条 |
 
 命令拿连接统一走 `AppState::conn()`，锁中毒会返回中文错误而不是 panic。
 
@@ -42,7 +43,7 @@ React 页面 ──invoke──> commands/*.rs ──> repo/*.rs ──> rusqlit
 
 - 命令参数/返回值用 `#[serde(rename_all = "camelCase")]`，JS 侧 camelCase，Rust 侧 snake_case，由 Tauri 自动转换
 - 返回类型必须是可 Serialize 的 DTO，禁止把 `rusqlite::Row` 之类的内部类型漏出去
-- 共 51 个命令：`commands/library.rs`（词表 11）、`commands/quiz.rs`（默写/错题 14）、`commands/system.rs`（设置/备份/朗读 11）、`commands/sync.rs`（跨设备同步 7）、`commands/ai.rs`（AI 讲解 6，默认关闭），另有工具命令 `commands/math.rs`（口算 1）与 `commands/print.rs`（打印 1）
+- 共 55 个命令：`commands/library.rs`（词表 11）、`commands/quiz.rs`（默写/错题 14）、`commands/system.rs`（设置/备份/朗读 11）、`commands/sync.rs`（跨设备同步 7）、`commands/ai.rs`（AI 讲解 6，默认关闭）、`commands/tts.rs`（语音包 4，ADR-21），另有工具命令 `commands/math.rs`（口算 1）与 `commands/print.rs`（打印 1）
 
 ## 数据库连接约定
 
@@ -51,10 +52,13 @@ React 页面 ──invoke──> commands/*.rs ──> repo/*.rs ──> rusqlit
 - 批量写入用 `unchecked_transaction()`（拿到的是 `&Connection`，不是 `&mut`）
 - 同步快照的替换发生在 `db::init` 打开连接**之前**（`repo/sync.rs::apply_pending`）；网络命令用 `async fn` + `spawn_blocking`，`MutexGuard` 绝不跨 await。详见 [sync.md](./sync.md)
 
-## TTS 预留
+## TTS 朗读
 
-`trait Speaker { fn speak(&self, text: &str) -> AppResult<()> }` 已注入 `AppState`，V1 没有任何调用点。
-V2 落地方式：新增 `SapiSpeaker` 实现 + 在 `commands` 加一条 `speak` 命令 + 默写页启用「朗读」按钮。**不需要改表结构**。
+ADR-19（系统离线语音）+ ADR-21（本地语音包）两层：
+
+- `speech/`：`Speaker` trait + `SystemSpeaker`（macOS say / Windows SAPI / Linux spd-say）；`LocalTts`（sherpa-onnx 引擎懒加载 + `tts-cache/` 哈希缓存 + 独立音频线程 rodio 播放）；`SpeechService` 路由——设置选 `local` 且模型完好才走本地，**任何失败静默兜底系统语音**
+- `tts/`：`models.rs` 语音包目录常量表（下载源 / 必需文件 / 引擎配置构建）与 `download.rs`（后台下载线程 + 进度事件 + 断点续传 + 解压落位）
+- 命令：`speak_text`（可选 `modelId` 试听）/ `stop_speak` + `commands/tts.rs` 四条（列表 / 下载 / 取消 / 删除）
 
 ## 前端结构
 
