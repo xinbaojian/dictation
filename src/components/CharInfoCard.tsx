@@ -19,8 +19,8 @@ interface CharInfoCardProps {
 }
 
 /** 查字页的字信息卡：横向布局——左边字头列（大字/拼音/部首/笔画/结构），
- *  右边释义 + AI 讲解放进限高滚动区。释义原文很长（新华字典风格全文），
- *  竖排会把卡片拉出一屏高，横排 + 内部滚动让每张卡高度可控、多字时两列对齐。 */
+ *  右边释义 + AI 讲解（释义在限高滚动区）。释义原文很长（新华字典风格全文），
+ *  竖排会把卡片拉出一屏高；每字独占一行全宽 + 内部滚动，减少看一个字时的卡内滚动。 */
 export default function CharInfoCard({ char, info, aiReady, generating, onGenerate }: CharInfoCardProps) {
   const c = info?.card?.content ?? null;
 
@@ -29,7 +29,7 @@ export default function CharInfoCard({ char, info, aiReady, generating, onGenera
   const strokes = info?.strokes ?? null;
 
   return (
-    <div className="flex w-full min-w-80 gap-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm min-[652px]:w-[calc(50%-0.375rem)]">
+    <div className="flex w-full gap-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm">
       {/* 字头列：大字 + 拼音 + 基本信息（竖排小字，居中） */}
       <div className="flex w-20 shrink-0 flex-col items-center gap-0.5">
         <span className="text-4xl font-medium leading-tight text-stone-800">{char}</span>
@@ -48,9 +48,10 @@ export default function CharInfoCard({ char, info, aiReady, generating, onGenera
         </div>
       </div>
 
-      {/* 右列：释义限高滚动 + AI 讲解常驻（AI 移出滚动区，长释义时生成入口不被埋没） */}
+      {/* 右列：释义限高滚动 + AI 讲解常驻（AI 移出滚动区，长释义时生成入口不被埋没）。
+          全宽卡片下释义行宽翻倍，限高放宽到 max-h-56，尽量减少看一个字时的卡内滚动 */}
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="max-h-44 overflow-y-auto pr-1">
+        <div className="max-h-56 overflow-y-auto pr-1">
           {info?.dict?.explanation ? (
             <p className="whitespace-pre-line text-xs leading-relaxed text-stone-600">
               {info.dict.explanation}

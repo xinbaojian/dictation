@@ -192,7 +192,7 @@ export default function Lookup() {
                 🔊 读一遍
               </button>
             </div>
-            <div className="flex w-full flex-wrap justify-center gap-3">
+            <div className="flex w-full flex-col gap-3">
               {uniqueChars.map((ch) => (
                 <CharInfoCard
                   key={ch}
