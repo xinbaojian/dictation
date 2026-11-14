@@ -1033,7 +1033,7 @@ dependencies = [
 
 [[package]]
 name = "dictation"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "bzip2 0.6.1",
  "hound",
