@@ -11,6 +11,7 @@
 // public/dict/ 是生成物，不进版本库；predev / prebuild 自动跑（缺源会直接失败）。
 // 手动重跑：node scripts/sync-dict-data.mjs
 
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
@@ -36,7 +37,9 @@ if (!existsSync(CCD)) {
 const ccdVersion = JSON.parse(
   readFileSync(join(root, "node_modules", "chinese-characters-decomposition", "package.json"), "utf8"),
 ).version;
-const stamp = `xinhua-20261114+ccd-${ccdVersion}${FORMAT}`;
+// xinhua 段用源文件内容哈希（不是手写日期）：vendor 源一改就自动重刷，不会静默用旧分片
+const xinhuaHash = createHash("sha256").update(readFileSync(XINHUA)).digest("hex").slice(0, 8);
+const stamp = `xinhua-${xinhuaHash}+ccd-${ccdVersion}${FORMAT}`;
 
 // 跳过条件同时看 stamp 与产物在不在（上一次跑挂了不能当成功放行）
 const existing = existsSync(DEST)
@@ -125,7 +128,7 @@ for (const name of readdirSync(DEST)) {
 }
 shards.forEach((bucket, i) => {
   const body = JSON.stringify(bucket);
-  bytes += body.length;
+  bytes += Buffer.byteLength(body);
   writeFileSync(join(DEST, "s" + i.toString(16).padStart(2, "0") + ".json"), body);
 });
 

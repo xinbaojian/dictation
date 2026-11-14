@@ -147,6 +147,7 @@ git commit -m "feat(lookup): vendor 新华字典精简源数据（部首/释义�
 // public/dict/ 是生成物，不进版本库；predev / prebuild 自动跑（缺源会直接失败）。
 // 手动重跑：node scripts/sync-dict-data.mjs
 
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
@@ -172,7 +173,9 @@ if (!existsSync(CCD)) {
 const ccdVersion = JSON.parse(
   readFileSync(join(root, "node_modules", "chinese-characters-decomposition", "package.json"), "utf8"),
 ).version;
-const stamp = `xinhua-20261114+ccd-${ccdVersion}${FORMAT}`;
+// xinhua 段用源文件内容哈希（不是手写日期）：vendor 源一改就自动重刷，不会静默用旧分片
+const xinhuaHash = createHash("sha256").update(readFileSync(XINHUA)).digest("hex").slice(0, 8);
+const stamp = `xinhua-${xinhuaHash}+ccd-${ccdVersion}${FORMAT}`;
 
 // 跳过条件同时看 stamp 与产物在不在（上一次跑挂了不能当成功放行）
 const existing = existsSync(DEST)
@@ -237,11 +240,9 @@ for (const [ch, e] of Object.entries(xinhua)) {
   entries.set(cp, { ...e });
 }
 let ccdUsed = 0;
+// xinhua 没有的字也收（只要结构）；有的字不动它已有的 r/y
 for (const row of ccd.rows) {
   const cp = row[0].codePointAt(0);
-  if (cp === undefined || entries.has(cp)) {
-    // xinhua 没有的字也收（只要结构）；有的字不动它已有的 r/y
-  }
   const label = structureLabel(row[2], row[3], row[5]);
   if (!label) continue;
   const prev = entries.get(cp) ?? {};
@@ -263,7 +264,7 @@ for (const name of readdirSync(DEST)) {
 }
 shards.forEach((bucket, i) => {
   const body = JSON.stringify(bucket);
-  bytes += body.length;
+  bytes += Buffer.byteLength(body);
   writeFileSync(join(DEST, "s" + i.toString(16).padStart(2, "0") + ".json"), body);
 });
 
@@ -276,8 +277,6 @@ console.log(
   `[dict] 已生成 ${entries.size} 个字（结构 ${ccdUsed} 条）/ ${SHARDS} 个分片（${(bytes / 1024 / 1024).toFixed(1)}MB）-> public/dict/`,
 );
 ```
-
-注意上面 `for (const row of ccd.rows)` 里有一段写了但没用的空 if（`if (cp === undefined || entries.has(cp))`）——写最终版时**删掉这个空分支**，直接 `const cp = ...; const label = ...`。（此处特意标注，防抄错。）
 
 - [ ] **Step 2: 挂进 pre 钩子与 gitignore**
 
