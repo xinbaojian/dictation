@@ -6,6 +6,7 @@ import { api, errorMessage } from "../lib/ipc";
 import { loadDictEntry } from "../lib/dict";
 import { charPinyins } from "../lib/pinyin";
 import { isHanzi, loadStrokeData } from "../lib/strokes";
+import type { CharCard } from "../types";
 
 /** 输入长度上限：查字不是抄句子，超长没有意义 */
 const MAX_CHARS = 12;
@@ -34,6 +35,9 @@ export default function Lookup() {
   const [generating, setGenerating] = useState<string | null>(null);
   const wordRef = useRef<StrokeWordHandle>(null);
   // 数据加载竞态守卫：换词后旧请求回来不许再写 state
+  // 最近一次成功生成的字卡：generate 完成时词已换，加载 effect 的 setInfos(next)
+  // 会把它覆盖掉（卡已入后端库但页面不显示），这里记住以便下次加载时并回
+  const lastCardRef = useRef<{ ch: string; card: CharCard } | null>(null);
   const queryGen = useRef(0);
   const { notice, notify } = useNotice();
 
@@ -53,7 +57,11 @@ export default function Lookup() {
       notify("error", "请输入汉字");
       return;
     }
-    if (chars.length > MAX_CHARS) chars.length = MAX_CHARS;
+    if (chars.length > MAX_CHARS) {
+      chars.length = MAX_CHARS;
+      // notify 只支持 ok/error，截断是中性提示，用 ok 的非阻断样式
+      notify("ok", `最多查 ${MAX_CHARS} 个字，已取前 ${MAX_CHARS} 个`);
+    }
     setQuery(chars.join(""));
   }, [text, notify]);
 
@@ -82,6 +90,12 @@ export default function Lookup() {
         }),
       );
       if (queryGen.current !== gen) return;
+      // generate 完成时词已换的那张卡，若本次查询包含该字，并回结果（本地缓存可能还没它）
+      const last = lastCardRef.current;
+      if (last && [...query].includes(last.ch)) {
+        const base = next[last.ch] ?? { pinyin: "", strokes: null, dict: null, card: null };
+        next[last.ch] = { ...base, card: last.card };
+      }
       setInfos(next);
       setLoadingInfo(false);
     })();
@@ -93,6 +107,8 @@ export default function Lookup() {
       setGenerating(ch);
       try {
         const card = await api.generateCharCard(ch);
+        // 记住这张卡：即使词已换、本次不显示，下次加载该字时也能并回来
+        lastCardRef.current = { ch, card };
         // 词已换、新词里没有这个字：这张卡不属于当前页面，丢弃
         if (![...query].includes(ch)) return;
         setInfos((prev) => {

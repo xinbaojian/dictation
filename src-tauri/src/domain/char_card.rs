@@ -80,7 +80,7 @@ pub fn validate(raw: &str, ch: &str) -> AppResult<CharCardContent> {
     if c.mnemonic.contains('\n') {
         return Err(AppError::msg("口诀里不能换行"));
     }
-    if char_len(&c.mnemonic) > 60 {
+    if char_len(&c.mnemonic) > 40 {
         return Err(AppError::msg("口诀太长了，请压到 40 个字以内"));
     }
     if let Some(t) = find_term(&c.mnemonic) {
@@ -154,6 +154,21 @@ mod tests {
         assert!(validate(&base(""), "碧").is_err());
         let long = "长".repeat(61);
         assert!(validate(&base(&long), "碧").is_err());
+    }
+
+    #[test]
+    fn mnemonic_length_boundary_is_40() {
+        let base = |m: &str| {
+            format!(r#"{{"meaning":"字义","mnemonic":"{m}","words":["碧绿","碧玉"],"sentences":["湖水碧绿。"]}}"#)
+        };
+        // 40 字整（含标点）：应通过
+        let ok = "碧".repeat(39) + "绿";
+        assert_eq!(char_len(&ok), 40);
+        assert!(validate(&base(&ok), "碧").is_ok(), "40 字口诀应通过");
+        // 41 字：应报错
+        let long = ok + "碧";
+        assert_eq!(char_len(&long), 41);
+        assert!(validate(&base(&long), "碧").is_err(), "41 字口诀应报错");
     }
 
     #[test]
