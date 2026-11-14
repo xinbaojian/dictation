@@ -1,5 +1,6 @@
 pub mod ai_cards;
 pub mod backup;
+pub mod char_cards;
 pub mod groups;
 pub mod sessions;
 pub mod settings;

@@ -27,9 +27,9 @@ const META_KEY: &str = "meta";
 /// 参与内容哈希的业务表。`settings` 刻意排除：它只存界面偏好（字号 / 遮罩秒数），
 /// 两台机器字号不同不该被算成「本机内容有改动」，否则每次拉取都会弹覆盖确认。
 /// 快照本身仍然把 settings 表一起带走，只是它不参与差异判定。
-/// `ai_cards`（迁移 0006 的讲解卡缓存）必须在这里：只生成/重新生成了卡片、词没变时，
-/// 哈希也得变，否则推送会被判成「内容没变」而跳过上传，另一台机器永远拿不到缓存卡。
-const TABLES: [&str; 5] = ["groups", "words", "sessions", "session_items", "ai_cards"];
+/// `ai_cards`（迁移 0006 的讲解卡缓存）与 `char_cards`（0007 的查字字卡缓存）必须在这里：
+/// 只生成/重新生成了卡片、词没变时，内容哈希也要变，否则推送会被判成「内容没变」而跳过。
+const TABLES: [&str; 6] = ["groups", "words", "sessions", "session_items", "ai_cards", "char_cards"];
 
 fn unix_secs() -> u64 {
     SystemTime::now()
@@ -1570,6 +1570,8 @@ fn perform_pull_with(
 mod tests {
     use super::*;
     use crate::db;
+    use crate::domain::char_card::CharCardContent;
+    use crate::repo::char_cards;
     use crate::repo::{groups, words};
 
     fn temp_dir(tag: &str) -> PathBuf {
@@ -1631,6 +1633,30 @@ mod tests {
             before,
             content_hash(&conn).unwrap(),
             "加讲解卡后哈希必须变化"
+        );
+    }
+
+    /// 查字字卡（迁移 0007）必须参与内容哈希（与 ai_cards 同一坑）。
+    #[test]
+    fn char_cards_participate_in_content_hash() {
+        let conn = db::open_memory();
+        let before = content_hash(&conn).unwrap();
+        char_cards::upsert(
+            &conn,
+            "碧",
+            &CharCardContent {
+                meaning: "青绿色的玉石".into(),
+                mnemonic: "白玉石".into(),
+                words: vec!["碧绿".into()],
+                sentences: vec!["湖水碧绿。".into()],
+            },
+            "test-model",
+        )
+        .unwrap();
+        let after = content_hash(&conn).unwrap();
+        assert_ne!(
+            before, after,
+            "只生成字卡也必须改变内容哈希，否则推送被跳过（与 ai_cards 同一坑）"
         );
     }
 
