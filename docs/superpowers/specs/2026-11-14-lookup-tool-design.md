@@ -16,7 +16,7 @@
 
 | 信息 | 来源 | 说明 |
 |---|---|---|
-| 结构 | `chinese-characters-decomposition`（npm，MIT；数据出自 Wikimedia Commons CCD 表，21169 字） | compositionType 符号（一/吕/回/吅/咒…）经映射表转教学标签：左右结构、上下结构、左中右、上中下、全包围、左上包围、右上包围、左三包围、上三包围、下半包围、独体字…；映射不到标「—」 |
+| 结构 | `chinese-characters-decomposition`（npm，MIT；数据出自 Wikimedia Commons CCD 表，21169 字） | compositionType 符号（一/吕/回/吅/咒…）+ **外框部件规则表**（辶→左下包围、疒→左上包围、门/冂→上三包围、囗→全包围、凵→下三包围、匚→左三包围、勹/气→右上包围；CCD 的几何拆分与教学口径不一致：病=吕、远=吅，必须看部件再定）转教学标签：左右结构、上下结构、左中右、上中下、全包围、左上包围、左下包围、上三包围、下三包围、左三包围、右上包围、半包围、独体字；叕/弼/* 等罕见复合结构标「—」 |
 | 部首 + 释义 | chinese-xinhua `data/word.json`（16142 字） | 不在 npm 上：一次性精简后 vendor 进仓库 `scripts/dict-src/xinhua.json`（只留部首/释义，去 oldword/more/strokes 等字段，约 8MB）；授权状态：社区抓取、无明确授权，README 注明「个人学习用途」 |
 | 部首兜底 | CCD 康熙部首 | xinhua 缺字时用；**部首以 xinhua 为准**（简体教学口径，如「绿→纟」） |
 | 笔画数 | 本地笔顺数据 `strokes.length` | 精确值，不打包第二份 |
@@ -44,9 +44,10 @@
   - `CharContext { char }`；人设同「给二年级孩子讲语文的老师」；
   - 输出 JSON：`{ meaning: 字义/字源小故事（≤60字）, mnemonic: 巧记口诀（≤40字）, words: 组词 2~4 个（含该字）, sentences: 例句 1~2 句（≤40字，含该字） }`；
   - `validate`：JSON 解析 + 长度上限 + 无换行 + 术语黑名单（口诀/例句）+ 例句必须含该字；不合格回喂病因重试一次（复用 client.rs 编排）。
-- **`migrations/0006_char_cards.sql`**：`char_cards (char TEXT PRIMARY KEY, content_json, model, created_at, updated_at)`；`db/mod.rs::MIGRATIONS` 追加。
+- **`migrations/0007_char_cards.sql`**（0006 已被 ai_cards 占用）：`char_cards (char TEXT PRIMARY KEY, content_json, model, created_at, updated_at)`；`db/mod.rs::MIGRATIONS` 追加。
   - 键是字文本本身，独立于词表：词表增删改、快照同步互不影响；随整库快照自动同步（ADR-17 零改动）。
   - `repo/char_cards.rs`：`upsert`（同字覆盖）/ `get`。
+  - `repo/sync.rs::TABLES` 加入 `char_cards`：只生成字卡也要改变内容哈希，否则推送被跳过（与 ai_cards 同一坑）。备份 JSON 不收录（同 ai_cards 先例：讲解缓存不入备份）。
 - **命令**（commands/ai.rs 加两个；锁编排照 `generate_word_card`：拿锁→放锁等 HTTP→拿锁落库）：
   - `get_char_card(char) -> Option<CharCardDto>`
   - `generate_char_card(char) -> CharCardDto`
