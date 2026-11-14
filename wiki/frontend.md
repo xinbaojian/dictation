@@ -1,6 +1,6 @@
 ---
 title: 前端结构
-updated: 2026-11-07
+updated: 2026-11-14
 tags: [frontend, react]
 related: [architecture.md, decisions.md]
 ---
@@ -20,6 +20,7 @@ related: [architecture.md, decisions.md]
 | { name: "dictation"; page: "stroke"; groupId: number | null; title: string }
 | { name: "dictation"; page: "print"; mode: "mistakes" | "group"; groupId: number | null; title: string }
 | { name: "math"; page: "sheet" }
+| { name: "lookup"; page: "lookup" }
 | { name: "settings" }
 ```
 
@@ -40,6 +41,7 @@ related: [architecture.md, decisions.md]
 | 词表 | `pages/Wordbook.tsx` | 分组树（可折叠、默认全部折叠、**可拖动调整层级与顺序**）、词数/错题/最近练习、行内编辑、粘贴导入、标记错题 |
 | 打印 / 字帖 | `pages/PrintSheet.tsx` | A4 字帖：每行一个词横向排满（示范字 → 描红 → 空格），可选方格（田 / 米 / 方）、大小（10 / 12 / 14mm）、描红遍数（0 / 1 / 2）、抄写单 ↔ 默写单；选项存 localStorage（`printSheet.options`） |
 | 口算练习 | `pages/math/MathSheet.tsx` | 左侧条件面板（留空位置 / 两步运算符 / 四位置取值区间 / 答案显隐，选项存 localStorage）、A4 满幅卷面（3×10 格 + 可裁剪答案条 + 口诀示范条 `example.ts`）、出题走 `generate_math_sheet` 命令（区间默认 = 三段难度，自定义 = 单池平铺，见 `domain/math.rs`） |
+| 查字 | `pages/Lookup.tsx` | 输入字词逐字出卡（`components/CharInfoCard.tsx`）：田字格笔顺动画（复用 `StrokeWord`）+ 拼音 + 部首/笔画数/结构/释义（`lib/dict.ts` 离线字典）；AI 未配置显示提示行，配置后可生成字卡并缓存秒开；见下「查字工具」 |
 
 ## 打印
 
@@ -80,6 +82,29 @@ related: [architecture.md, decisions.md]
 - `components/StrokeWord.tsx`：**初始 `showCharacter: false`**，否则还没轮到的字会先整字显示、轮到再被擦掉重描；
   淡灰轮廓（`showOutline`）当描红底，遮住模式下连轮廓也不画
 - 非汉字、没有数据的字**退回静态字形**（框内直接画这个字），不会留白
+
+## 查字工具
+
+第三个顶栏工具「查字」（ADR-22）：家长输入字词，页面逐字出信息卡——田字格笔顺动画（复用 `components/StrokeWord.tsx` 与 `lib/strokes.ts`）+ 逐字拼音（`lib/pinyin.ts`，与笔画复习页同一套）+ 部首 / 笔画数 / 结构 / 释义。`components/CharInfoCard.tsx` 负责单字信息卡；AI 字卡走 `get_char_card` / `generate_char_card` 命令（参数 `character`），未配置 AI 时只显示提示行，不弹窗；长释义默认折叠、点击展开。
+
+字典数据（部首/结构/释义）来自 `lib/dict.ts` 的分片懒加载，规则与笔顺数据同思路（ADR-18）：
+
+- `scripts/sync-dict-data.mjs` 把 vendor 源（`scripts/dict-src/xinhua.json` 精简新华字典 + node_modules 里的 CCD 结构数据）打成 **64 个分片**写进 `public/dict/`（生成物，`.gitignore` 掉了），`predev` / `prebuild` 自动跑；约 21153 字 / 实测约 5.5MB
+- 分片规则：**码点 % 64** 决定文件名 `s??.json`，片内 key 是码点十六进制——与 `public/hanzi/` 完全同构，只是片数不同
+- `.stamp` 绑定源内容哈希（`xinhua-<sha8>+ccd-<版本>-s64a`），换源 / 升级包自动重刷；URL 同样必须相对站点根（`import.meta.env.BASE_URL`）
+- 结构标签来自 CCD 的部件规则表转教学标签（CCD 是几何拆分，须看部件再定包围结构），约 21094 条；罕见复合（叕 / 弼 / \*）不产出，显示「—」
+- 笔画数取笔顺数据 `strokes.length`（精确），不重复打包；查不到的字段一律显示「—」，不引第二数据源
+
+### 验收路径
+
+1. 顶栏出现「查字」，进入后侧栏高亮「查字」
+2. 查「碧绿」：逐字笔顺动画 + 拼音 + 两张信息卡（碧：石 / 14 画 / 上下结构；绿：纟 / 11 画 / 左右结构）
+3. 点田字格只重播该字；「重播」重播整词；「朗读」读整词；离开页面声音停止
+4. 输入「爸爸」只出一张卡（同字去重）
+5. 纯非汉字输入（字母 / 数字 / 标点）toast「请输入汉字」
+6. AI 未配置显示提示行；配置后生成字卡、再次进入秒开（读 `char_cards` 缓存）；生成中按钮防连点
+7. 长释义折叠，点击展开
+8. 生僻字（字典无条目）退静态字形，不白屏
 
 ## 通用组件
 

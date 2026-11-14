@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-给二年级孩子的**学习小工具集合**（单机离线桌面应用）：一级顶栏切换工具，当前含「生词默写」（家长读词、孩子手写、家长批改；程序负责抽题、防偷看、记录错题）与「口算练习」（三数两步逆推口算卷，出题打印）两个工具。
+给二年级孩子的**学习小工具集合**（单机离线桌面应用）：一级顶栏切换工具，当前含「生词默写」（家长读词、孩子手写、家长批改；程序负责抽题、防偷看、记录错题）、「口算练习」（三数两步逆推口算卷，出题打印）与「查字」（家长输字词，逐字笔顺动画 + 部首/笔画数/结构/释义，AI 单字详解可选，见 wiki ADR-22）三个工具。
 
 - Rust + Tauri 2 + SQLite（rusqlite，bundled）
 - React 18 + TypeScript + Vite + Tailwind CSS 4
@@ -48,16 +48,19 @@ src-tauri/src/db/       连接 + WAL + 迁移 + 启动时 pending 快照替换
 src-tauri/src/ai/       AI 讲解卡客户端与配置（ADR-20，默认关闭）
 src-tauri/src/domain/   text.rs 粘贴切分、sampler.rs 抽题（纯函数，带单测）
 src-tauri/src/repo/     groups / words / sessions / word_progress / settings / backup / sync
-src-tauri/src/commands/ library.rs（11）/ quiz.rs（14）/ system.rs（11）/ sync.rs（7）/ ai.rs（6）/ tts.rs（4）/ math.rs（1）/ print.rs（1）（薄封装，共 55 个命令）
+src-tauri/src/commands/ library.rs（11）/ quiz.rs（14）/ system.rs（11）/ sync.rs（7）/ ai.rs（8）/ tts.rs（4）/ math.rs（1）/ print.rs（1）（薄封装，共 57 个命令）
 src-tauri/src/speech/   朗读：trait Speaker + 系统 TTS（say/SAPI/spd-say，ADR-19）+ SpeechService 路由与 LocalTts 本地合成（ADR-21）；模型下载在 src-tauri/src/tts/
-src/pages/              Pick / Quiz / Review / Mistakes / StrokeReview / History / Settings / Wordbook / PrintSheet；math/（口算：MathSheet + example + math-sheet.css）
+src/pages/              Pick / Quiz / Review / Mistakes / StrokeReview / History / Settings / Wordbook / PrintSheet / Lookup；math/（口算：MathSheet + example + math-sheet.css）
 src/tools/registry.ts   工具注册表：顶栏一级菜单（TOOLS）与各工具二级菜单（NAV_BY_TOOL）、Route 联合类型
 src/lib/ipc.ts          全部自定义后端命令集中于此，类型来自 src/types.ts
 src/lib/strokes.ts      笔顺数据加载（分片缓存，本地 public/hanzi/，不联网）
+src/lib/dict.ts         查字工具的离线字典加载（64 分片，本地 public/dict/，规则同 strokes；见 wiki ADR-22）
 src/lib/updater.ts      自动升级状态机（插件 API：check / downloadAndInstall）
 scripts/gen-updater-manifest.mjs  CI 里把各平台 .sig 汇总成 Release 的 latest.json
 scripts/sync-hanzi-data.mjs       把 hanzi-writer-data 打成 256 个分片写进 public/hanzi/（predev/prebuild 自动跑）
+scripts/sync-dict-data.mjs        把 scripts/dict-src/ 的字典源打成 64 个分片写进 public/dict/（查字工具，predev/prebuild 自动跑，.stamp 绑源内容哈希）
 public/hanzi/           笔画数据分片，生成物（.gitignore 掉了），别手改也别提交；约 33MB
+public/dict/            查字工具字典分片，生成物（.gitignore 掉了），别手改也别提交；约 5.5MB
 ```
 
 ## 硬约束（改代码前必须知道）
@@ -65,7 +68,7 @@ public/hanzi/           笔画数据分片，生成物（.gitignore 掉了），
 1. **学习进度只能通过 `repo/word_progress.rs` 修改**。命令层、会话层都不得直接写 `status / wrong_count / correct_streak`。这是为了以后拆「多孩子」时把进度迁到 `word_progress` 表。
 2. **错题本不建表**，等价于 `words.status = 'learning'`。别加 `mistakes` 表，会不同步。
 3. **一场会话内词不重复**由 `UNIQUE(session_id, word_id)` 兜底；顺序由 `seq` 记录，别用内存下标当唯一真相。
-4. **拼音永不进数据模型**（`words` 无 `pinyin` 列、导入解析不处理拼音）。笔画复习页的拼音显示是 ADR-19 的**有意决策**：`pinyin-pro` 前端离线转换、仅限该页，别把拼音带到其它页面或打印单（默写场景排除拼音的理由仍成立，见 ADR-1/19）。
+4. **拼音永不进数据模型**（`words` 无 `pinyin` 列、导入解析不处理拼音）。笔画复习页与查字工具的拼音显示是 ADR-19（修订）/ADR-22 的**有意决策**：`pinyin-pro` 前端离线转换、仅限这两处，别把拼音带到其它页面或打印单（默写场景排除拼音的理由仍成立，见 ADR-1/19）。
 5. **分组是树**（`groups.parent_id`）：选父分组就等于选它全部子孙，抽题/打印/统计都靠 `sampler::expand_group_ids` 展开；别在别处再写一套遍历。拖动改结构只走 `repo/groups.rs::move_to`（换父级 + 同级 `sort_order` 重排 + 数字编号重排，一个事务）。
 6. **前端不拼 SQL、不绕过 `src/lib/ipc.ts`**。新增后端能力 = 加命令 + 加 ipc 方法 + 加类型。
 7. **数据目录位置**：Windows / Linux 优先放「可执行文件同级目录」（绿色便携，拷走文件夹即可换电脑）；**macOS 一律放 `~/Library/Application Support/com.dictation.desktop`**——`.app` 包更新时会被整体替换，放包内（`Dictation.app/Contents/MacOS`）会随更新丢数据。`src-tauri/src/db/mod.rs::resolve_dir` 已用 `cfg(target_os = "macos")` 隔离，别改回「放 exe 同级」。
@@ -95,6 +98,7 @@ public/hanzi/           笔画数据分片，生成物（.gitignore 掉了），
 | 自动升级 | `src/lib/updater.ts` + `Settings.tsx` / `App.tsx`；清单与平台映射在 `scripts/gen-updater-manifest.mjs` |
 | 跨设备同步 | `repo/sync.rs`（`SnapshotStore` / 快照 / CAS / pending）+ `commands/sync.rs` + `db/mod.rs::init` + `Settings.tsx`；见 [wiki/sync.md](./wiki/sync.md) |
 | 笔顺动画 / 笔画复习 | `src/components/StrokeWord.tsx` + `src/lib/strokes.ts` + `pages/StrokeReview.tsx`；数据换代只需升 `hanzi-writer-data` 并让脚本重刷（`.stamp` 里的 FORMAT 一起改）。拼音（`src/lib/pinyin.ts`，仅此页）与朗读（`speech/` + `speak_text`/`stop_speak` 命令）见 ADR-19 |
+| 查字工具 / 字典数据 | `pages/Lookup.tsx` + `components/CharInfoCard.tsx` + `lib/dict.ts`（数据 `scripts/sync-dict-data.mjs` → `public/dict/`，源在 `scripts/dict-src/`）；AI 字卡 `domain/char_card.rs` + `repo/char_cards.rs` |
 
 ## 已知坑
 

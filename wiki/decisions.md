@@ -1,6 +1,6 @@
 ---
 title: 设计决策（ADR）
-updated: 2026-11-07
+updated: 2026-11-14
 tags: [adr, decisions]
 related: [overview.md, quiz-flow.md]
 ---
@@ -142,6 +142,7 @@ related: [overview.md, quiz-flow.md]
 - **TTS 走系统自带语音**（不引联网引擎，维持默认纯离线）：macOS `say` 子进程（探测 zh 语音，`-v` 指定）、Windows SAPI `ISpVoice`（`EnumTokens("Language=804")` 选中文，`SPF_ASYNC` + `SPF_PURGEBEFORESPEAK`）、Linux `spd-say`。系统没装中文语音时报可操作的中文提示
 - **代价**：前端产物增大约 0.3MB（pinyin-pro 词典压缩后进 bundle，实测 609KB/gzip 236KB，本地加载无感）；SAPI 代码无法在 macOS 开发机上运行验证，靠 `cargo check --target x86_64-pc-windows-msvc`（最小检查工程，绕开 tauri 依赖树 ring 的交叉 C 编译问题）+ CI Windows 构建 + 审查兜底
 - **接口形状**（沿用 ADR-2 的预留）：`speech/` 里 `Speaker` trait + `SystemSpeaker` 按平台分发；命令 `speak_text` / `stop_speak`（async + `spawn_blocking`）；speak 是「先停上一句再读」的幂等语义，StrictMode 双跑无害
+- **修订（2026-11-14，ADR-22）**：拼音显示范围延伸为「笔画复习页与查字工具」；其余页面、打印单、数据模型仍无拼音
 
 ## ADR-20 AI 讲解卡：显式配置的 OpenAI 兼容客户端 + 内容缓存表
 
@@ -162,3 +163,10 @@ related: [overview.md, quiz-flow.md]
 - **设置与同步**：`ttsEngine` / `ttsModelId` 存 settings（本机偏好，整库拉取替换时留在本机，ADR-17 既有机制）；换机器没有模型文件 → 自动兜底系统语音，不算错误
 - **代价**：安装包增大（静态链 sherpa-onnx + onnxruntime，实测约 +20~30MB）；首次本地朗读要加载模型（1~3 秒，之后常驻）；不做归档 sha256 校验（引擎创建失败即兜底并报错，发布源是官方 GitHub）
 - **修订**：ADR-19「不引联网引擎」仍然成立——本 ADR 是离线引擎的升级，云端在线 TTS（Phase 2）将来另立 ADR；`GenerationConfig.tokens` 已支持拼音预分词输入，将来若多音字不准可接 `lib/pinyin.ts` 校正（本次不做，先按 wiki 验收路径试听全词表）
+
+## ADR-22 查字工具：离线字典随包 + AI 单字讲解按字缓存
+
+- **结论**：第三个顶栏工具「查字」：家长输入字词，逐字笔顺动画（复用 `StrokeWord`）+ 每字部首/笔画数/结构/释义。结构来自 CCD（`chinese-characters-decomposition`，MIT；符号 + 外框部件规则表转教学标签——CCD 是几何拆分，「病」标吕、「远」标吅，必须看部件再定包围结构）；部首与释义来自 vendor 的 chinese-xinhua 精简源（`scripts/dict-src/`，社区抓取、无明确授权，仅个人学习用途，README 已注明）；`scripts/sync-dict-data.mjs` 打成 64 分片进 `public/dict/`（生成物不进库），前端 `lib/dict.ts` 懒加载。笔画数取笔顺数据 `strokes.length`（精确），拼音取 pinyin-pro（修订 ADR-19 范围），都不重复打包。xinhua 缺部首的 9044 条全是生僻字，常见字覆盖实测 122/122，缺就显示「—」，不引第二数据源
+- **理由**：「爸爸，xx 字怎么写」是默写场景之外的高频请求；部首/结构/释义必须离线秒开（默认纯离线是产品定义，ADR-18 同思路），AI 详解是可选增强（ADR-20 边界不变：显式配置、LLM 永不写学习进度）
+- **AI 字卡**：新 domain `char_card`（字义/口诀/组词/例句，validate 与 ai_card 同一套路）+ 表 `char_cards`（0007 迁移，按字文本主键，独立于词表；随整库快照同步，`sync.rs::TABLES` 已登记——只生成字卡也要改变内容哈希；不进备份 JSON，同 ai_cards 先例）
+- **代价**：仓库 +约 6MB（vendor 源）、安装包 +约 7MB（字典分片）；部首口径用 xinhua（简体教学口径）而非 CCD 康熙部首（「绿→纟」不是「糸」），两源部首冲突时以 xinhua 为准

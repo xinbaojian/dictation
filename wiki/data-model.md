@@ -1,6 +1,6 @@
 ---
 title: 数据模型
-updated: 2026-11-07
+updated: 2026-11-14
 tags: [database, sqlite]
 related: [quiz-flow.md, architecture.md]
 ---
@@ -82,6 +82,17 @@ related: [quiz-flow.md, architecture.md]
 | `created_at` / `updated_at` | UTC 时间戳 |
 
 唯一索引 `UNIQUE(word_id, kind)`：按词缓存，生成一次离线复用。词文本被编辑时由 `repo/words.rs::update` 主动清卡（讲解针对旧字形，对齐 ADR-16 清手工错字的先例）。表内容随整库快照同步（ADR-17）：一台机器生成、两台可用。API Key 不入库（在数据目录 `.ai-config.json`，见 ADR-20）。
+
+### char_cards（查字工具的 AI 字卡缓存，0007）
+
+| 字段 | 说明 |
+|---|---|
+| `char` | 单字文本，**主键**（与 ai_cards 按 word_id 不同：查字的字不要求在词表里） |
+| `content_json` | 校验通过后的字卡内容 JSON（字义/口诀/组词/例句） |
+| `model` | 生成时用的模型名 |
+| `created_at` / `updated_at` | UTC 时间戳 |
+
+按字缓存，生成一次离线复用（`domain/char_card.rs` 的 validate 与 ai_card 同一套路）。**没有外键、也没有清卡联动**：词表增删改不影响本表——讲解针对的是「这个字」，不随词条走。表内容随整库快照同步（ADR-17）：`repo/sync.rs::TABLES` 已登记，只生成字卡也会改变 `content_hash`，两台机器一台生成、两台可用。同 ai_cards 先例，**不进备份 JSON**（备份只覆盖词表与进度）。API Key 同样不入库（ADR-20）。见 ADR-22。
 
 ### _sync_meta（只在同步启用后出现）
 
