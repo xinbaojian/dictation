@@ -112,6 +112,8 @@ pub fn run() {
             commands::ai::test_ai_config,
             commands::ai::get_word_card,
             commands::ai::generate_word_card,
+            commands::ai::get_char_card,
+            commands::ai::generate_char_card,
             commands::tts::list_tts_models,
             commands::tts::download_tts_model,
             commands::tts::cancel_tts_download,

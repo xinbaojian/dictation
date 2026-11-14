@@ -1,5 +1,6 @@
 use crate::ai::config::AiConfig;
 use crate::domain::ai_card::{self, CardContent, ChatMessage, WordContext};
+use crate::domain::char_card::{self, CharCardContent, CharContext};
 use crate::error::{AppError, AppResult};
 use serde_json::{json, Value};
 
@@ -89,6 +90,29 @@ pub fn generate_content(cfg: &AiConfig, ctx: &WordContext) -> AppResult<(CardCon
             });
             let raw2 = post_chat(cfg, &build_body(&cfg.model, &messages, cfg.max_output_tokens))?;
             let content = ai_card::validate(&raw2, &ctx.text).map_err(|e| {
+                AppError::msg(format!("生成的内容不合格式（{e}），请重试或换个模型"))
+            })?;
+            Ok((content, cfg.model.clone()))
+        }
+    }
+}
+
+/// 生成单字讲解卡内容（查字工具）：与 generate_content 同一套编排（校验失败回喂重试一次）。
+pub fn generate_char_content(cfg: &AiConfig, ctx: &CharContext) -> AppResult<(CharCardContent, String)> {
+    let mut messages = char_card::build_messages(ctx);
+    let raw = post_chat(cfg, &build_body(&cfg.model, &messages, cfg.max_output_tokens))?;
+    match char_card::validate(&raw, &ctx.char) {
+        Ok(content) => Ok((content, cfg.model.clone())),
+        Err(first) => {
+            messages.push(ChatMessage { role: "assistant".into(), content: raw });
+            messages.push(ChatMessage {
+                role: "user".into(),
+                content: format!(
+                    "你上次的输出不合格：{first}。请严格按要求的 JSON 格式重新输出，只输出 JSON 本身。"
+                ),
+            });
+            let raw2 = post_chat(cfg, &build_body(&cfg.model, &messages, cfg.max_output_tokens))?;
+            let content = char_card::validate(&raw2, &ctx.char).map_err(|e| {
                 AppError::msg(format!("生成的内容不合格式（{e}），请重试或换个模型"))
             })?;
             Ok((content, cfg.model.clone()))

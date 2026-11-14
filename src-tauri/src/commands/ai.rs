@@ -1,8 +1,9 @@
 use crate::ai::{client, config};
 use crate::ai::config::{AiConfig, AiConfigView};
 use crate::domain::ai_card::WordContext;
+use crate::domain::char_card::CharContext;
 use crate::error::{AppError, AppResult};
-use crate::repo::{ai_cards, words};
+use crate::repo::{ai_cards, char_cards, words};
 use crate::AppState;
 use tauri::State;
 
@@ -112,4 +113,35 @@ pub async fn generate_word_card(
     )?;
     let conn = state.conn()?;
     ai_cards::upsert(&conn, word_id, "mnemonic", &content, &model)
+}
+
+#[tauri::command]
+pub fn get_char_card(
+    state: State<'_, AppState>,
+    character: String,
+) -> AppResult<Option<char_cards::CharCardDto>> {
+    let conn = state.conn()?;
+    char_cards::get(&conn, &character)
+}
+
+/// 生成/重新生成单字讲解卡（查字工具）。参数校验（必须正好一个字）属参数转换，
+/// 放命令层；锁编排与 generate_word_card 相同：拿锁落库 → 放锁等 HTTP → 拿锁落库。
+#[tauri::command]
+pub async fn generate_char_card(
+    state: State<'_, AppState>,
+    character: String,
+) -> AppResult<char_cards::CharCardDto> {
+    if character.chars().count() != 1 {
+        return Err(AppError::msg("一次只讲一个字"));
+    }
+    let ctx = CharContext { char: character.clone() };
+    let dir = state.data_dir.clone();
+    let cfg = join(
+        tauri::async_runtime::spawn_blocking(move || config::load_required(&dir)).await,
+    )?;
+    let (content, model) = join(
+        tauri::async_runtime::spawn_blocking(move || client::generate_char_content(&cfg, &ctx)).await,
+    )?;
+    let conn = state.conn()?;
+    char_cards::upsert(&conn, &character, &content, &model)
 }

@@ -3,6 +3,7 @@ import type {
   AiCard,
   AiConfigView,
   BackupInfo,
+  CharCard,
   Group,
   GroupDeleteResult,
   ImportResult,
@@ -141,6 +142,8 @@ export const api = {
   ) => invoke<string>("test_ai_config", { baseUrl, model, apiKey, maxOutputTokens }),
   getWordCard: (wordId: number) => invoke<AiCard | null>("get_word_card", { wordId }),
   generateWordCard: (wordId: number) => invoke<AiCard>("generate_word_card", { wordId }),
+  getCharCard: (character: string) => invoke<CharCard | null>("get_char_card", { character }),
+  generateCharCard: (character: string) => invoke<CharCard>("generate_char_card", { character }),
 
   // 跨设备同步：默认完全离线，只有配置了自有 MySQL 才会有网络请求
   syncStatus: () => invoke<SyncStatus>("sync_status"),

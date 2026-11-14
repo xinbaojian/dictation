@@ -164,6 +164,27 @@ export interface AiCard {
   updatedAt: string;
 }
 
+/** AI 单字讲解卡内容（对齐 Rust domain::char_card::CharCardContent） */
+export interface CharCardContent {
+  /** 字义 / 来历小故事（讲给孩子听） */
+  meaning: string;
+  /** 巧记口诀 */
+  mnemonic: string;
+  /** 含该字的常用词语 2~4 个 */
+  words: string[];
+  /** 例句 1~2 句，每句包含该字 */
+  sentences: string[];
+}
+
+/** 查字工具的 AI 字卡（按字缓存，独立于词表） */
+export interface CharCard {
+  char: string;
+  content: CharCardContent;
+  model: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** AI 配置的掩码视图：key 原值永不回传 */
 export interface AiConfigView {
   configured: boolean;
