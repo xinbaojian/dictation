@@ -3,6 +3,7 @@ import appIconUrl from "../app-icon.svg?url";
 import { api } from "./lib/ipc";
 import { useAutoUpdate } from "./lib/updater";
 import History from "./pages/History";
+import LookupPage from "./pages/Lookup";
 import MathSheetPage from "./pages/math/MathSheet";
 import Mistakes from "./pages/Mistakes";
 import Pick from "./pages/Pick";
@@ -72,17 +73,18 @@ export default function App() {
   let activeNav: string;
   if (route.name === "settings") activeNav = "";
   else if (route.name === "math") activeNav = "sheet";
+  else if (route.name === "lookup") activeNav = "lookup";
   else if (route.page === "quiz" || route.page === "review") activeNav = "pick";
   else if (route.page === "stroke") activeNav = "mistakes";
   else if (route.page === "print") activeNav = route.mode === "mistakes" ? "mistakes" : "wordbook";
   else activeNav = route.page;
 
   // 生词默写路由收窄（其它工具 / 设置页时为 null），页面挂载判断都从它取
-  const dr = route.name === "settings" || route.name === "math" ? null : route;
+  const dr = route.name === "dictation" ? route : null;
 
   const updateAvailable = updater.state.phase === "available" && !updater.state.dismissed;
   // 默写、批改、笔画复习、打印、设置页不弹横幅：前几个不能打断孩子，设置页自己有完整卡片
-  const quietRoute = ["quiz", "review", "stroke", "print", "settings"].includes(routeKey);
+  const quietRoute = ["quiz", "review", "stroke", "print", "settings", "lookup"].includes(routeKey);
   const showUpdateBanner = updateAvailable && !quietRoute;
   const showSyncBanner = !!syncNotice && !quietRoute;
   const settingsDot = updateAvailable || !!syncNotice;
@@ -253,6 +255,7 @@ export default function App() {
             />
           )}
           {route.name === "math" && <MathSheetPage />}
+          {route.name === "lookup" && <LookupPage />}
         </main>
       </div>
     </div>
