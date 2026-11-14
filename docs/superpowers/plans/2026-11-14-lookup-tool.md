@@ -55,14 +55,24 @@ let kept = 0, withRadical = 0;
 for (const e of src) {
   const w = (e.word ?? "").trim();
   if ([...w].length !== 1) continue;                 // 只要单字条目
-  const entry = {};
   const radical = [...(e.radicals ?? "")];
-  if (radical.length === 1) { entry.r = radical[0]; withRadical++; }
-  const y = (e.explanation ?? "").trim();
-  if (y) entry.y = y;
-  if (Object.keys(entry).length === 0) continue;     // 部首释义全无的条目不要
-  out[w] = entry;
-  kept++;
+  const r = radical.length === 1 ? radical[0] : undefined;   // 部首仅当恰好一个字符
+  const y = (e.explanation ?? "").trim() || undefined;
+  if (!r && !y) continue;                            // 部首释义全无的条目不要
+  const prev = out[w];
+  if (!prev) {                                       // 首次见到这个字：建条目
+    const entry = {};
+    if (r) { entry.r = r; withRadical++; }
+    if (y) entry.y = y;
+    out[w] = entry;
+    kept++;
+    continue;
+  }
+  // 上游有 1332 个单字重复条目：填空式合并——只补缺失字段，
+  // 首个非空 r / y 胜出，绝不用后来的空值或重复条目覆盖已有值
+  // （末条覆盖会让 83 个字丢掉部首，见 Task 1 报告）。
+  if (r && !prev.r) { prev.r = r; withRadical++; }
+  if (y && !prev.y) { prev.y = y; }
 }
 fs.mkdirSync("scripts/dict-src", { recursive: true });
 fs.writeFileSync("scripts/dict-src/xinhua.json", JSON.stringify(out));
@@ -70,7 +80,7 @@ console.log("kept:", kept, "withRadical:", withRadical);
 '
 ```
 
-Expected: `kept: ~16000, withRadical: 7098`
+Expected: `kept: ~14800`（唯一字数）、`withRadical: ~7093`（键级带部首数）；上游快照若有小幅变动允许 ±1 漂移。
 
 - [ ] **Step 3: 验证产物**
 
@@ -79,10 +89,11 @@ node -e '
 const d = require("./scripts/dict-src/xinhua.json");
 console.log("碧.r =", d["碧"].r, "| 释义含青绿:", d["碧"].y.includes("青绿"));
 console.log("绿.r =", d["绿"].r, "| 的.r =", d["的"].r, "| 回.r =", d["回"].r);
+console.log("薭.r =", d["薭"].r, "| 重复条目合并后释义非空:", d["薭"].y.length > 0);
 ' && ls -la scripts/dict-src/xinhua.json
 ```
 
-Expected: `碧.r = 石 | 释义含青绿: true`、`绿.r = 纟`、`的.r = 白`、`回.r = 囗`，文件 < 10MB。
+Expected: `碧.r = 石 | 释义含青绿: true`、`绿.r = 纟`、`的.r = 白`、`回.r = 囗`，文件 < 10MB；`薭.r = 艹`（该字上游有两条重复条目、末条无部首，是「填空式合并」的回归点）。
 
 - [ ] **Step 4: 写 `scripts/dict-src/README.md`**
 
@@ -97,6 +108,7 @@ Expected: `碧.r = 石 | 释义含青绿: true`、`绿.r = 纟`、`的.r = 白`�
   若日后收到侵权通知应删除并改换数据源。
 - 重新生成：见仓库根 `docs/superpowers/plans/2026-11-14-lookup-tool.md` Task 1 的命令。
 - 消费方：`scripts/sync-dict-data.mjs`（打成 public/dict/ 分片）。
+- 上游 word.json sha256：8ae3453eacc5b0f3fdfba47eac8bb686cd73914d278e8b851ae6ef81082f80e7
 ```
 
 - [ ] **Step 5: Commit**

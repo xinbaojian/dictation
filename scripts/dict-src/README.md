@@ -8,3 +8,4 @@
   若日后收到侵权通知应删除并改换数据源。
 - 重新生成：见仓库根 `docs/superpowers/plans/2026-11-14-lookup-tool.md` Task 1 的命令。
 - 消费方：`scripts/sync-dict-data.mjs`（打成 public/dict/ 分片）。
+- 上游 word.json sha256：8ae3453eacc5b0f3fdfba47eac8bb686cd73914d278e8b851ae6ef81082f80e7
