@@ -2,6 +2,8 @@ node_modules
 dist
 # 笔画数据是从 node_modules/hanzi-writer-data 生成出来的（scripts/sync-hanzi-data.mjs）
 public/hanzi/
+# 字典数据（部首/结构/释义）生成物（scripts/sync-dict-data.mjs）
+public/dict/
 src-tauri/target
 *.db
 *.db-wal

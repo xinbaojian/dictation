@@ -4,9 +4,9 @@
   "version": "0.8.1",
   "type": "module",
   "scripts": {
-    "predev": "node scripts/sync-hanzi-data.mjs",
+    "predev": "node scripts/sync-hanzi-data.mjs && node scripts/sync-dict-data.mjs",
     "dev": "vite",
-    "prebuild": "node scripts/sync-hanzi-data.mjs",
+    "prebuild": "node scripts/sync-hanzi-data.mjs && node scripts/sync-dict-data.mjs",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
