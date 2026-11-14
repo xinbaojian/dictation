@@ -29,7 +29,7 @@ export default function CharInfoCard({ char, info, aiReady, generating, onGenera
   const strokes = info?.strokes ?? null;
 
   return (
-    <div className="flex w-[calc(50%-0.375rem)] min-w-80 gap-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm">
+    <div className="flex w-full min-w-80 gap-4 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm min-[652px]:w-[calc(50%-0.375rem)]">
       {/* 字头列：大字 + 拼音 + 基本信息（竖排小字，居中） */}
       <div className="flex w-20 shrink-0 flex-col items-center gap-0.5">
         <span className="text-4xl font-medium leading-tight text-stone-800">{char}</span>
@@ -48,8 +48,8 @@ export default function CharInfoCard({ char, info, aiReady, generating, onGenera
         </div>
       </div>
 
-      {/* 右列：释义 + AI 讲解，同一个限高滚动区（释义是字典原文，可能几十行） */}
-      <div className="min-w-0 flex-1">
+      {/* 右列：释义限高滚动 + AI 讲解常驻（AI 移出滚动区，长释义时生成入口不被埋没） */}
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="max-h-44 overflow-y-auto pr-1">
           {info?.dict?.explanation ? (
             <p className="whitespace-pre-line text-xs leading-relaxed text-stone-600">
@@ -58,10 +58,11 @@ export default function CharInfoCard({ char, info, aiReady, generating, onGenera
           ) : (
             info !== undefined && <p className="text-xs text-stone-300">暂无释义</p>
           )}
+        </div>
 
-          {/* AI 单字讲解 */}
-          {info !== undefined && (
-            <div className="mt-2 border-t border-stone-100 pt-2">
+        {/* AI 单字讲解 */}
+        {info !== undefined && (
+          <div className="border-t border-stone-100 pt-2">
               {c ? (
                 <div className="flex flex-col gap-1.5">
                   <p className="text-xs leading-relaxed text-stone-600">{c.meaning}</p>
@@ -102,6 +103,5 @@ export default function CharInfoCard({ char, info, aiReady, generating, onGenera
           )}
         </div>
       </div>
-    </div>
   );
 }
