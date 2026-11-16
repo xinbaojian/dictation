@@ -266,6 +266,24 @@ export interface SyncOutcome {
   needsConfirm: boolean;
 }
 
+/** 本机与云端状态对比（sync_compare）：轻量查询云端版本/设备/时间，不下载快照 */
+export interface SyncComparison {
+  kind: "pending" | "noCloud" | "cloudBehind" | "synced" | "localAhead" | "behind" | "diverged";
+  message: string;
+  /** 本机自上次同步点之后有没有改动（口径与拉取判定一致） */
+  localChanged: boolean;
+  /** 本机是否一条业务数据都没有（新装机器） */
+  localEmpty: boolean;
+  /** 云端当前版本；pending 短路（未联网）时为 null */
+  remoteVersion: number | null;
+  /** 本机记录的云端版本（上次同步成功时） */
+  knownVersion: number;
+  /** 云端最后一次推送的设备名 */
+  remoteUpdatedBy: string;
+  /** 云端行的更新时间（epoch 秒，后端用 UNIX_TIMESTAMP 取，避免猜服务器时区）；未联网时为 null */
+  remoteUpdatedAt: number | null;
+}
+
 /** 口算练习：一道三数两步逆推题（① op1 ② op2 ③ = ④，从左到右计算） */
 export interface MathQuestion {
   a: number;

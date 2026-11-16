@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ConfirmModal from "../components/ConfirmModal";
 import Markdown from "../components/Markdown";
 import AiSettings from "../components/AiSettings";
@@ -10,6 +10,7 @@ import type { UpdaterController } from "../lib/updater";
 import type {
   BackupInfo,
   Settings as SettingsType,
+  SyncComparison,
   SyncConfig,
   SyncStatus,
 } from "../types";
@@ -41,6 +42,17 @@ const FONT_OPTIONS = [
   { value: 128, label: "超大" },
 ];
 
+/** 同步状态对比结论的图标与颜色：让用户一眼看出该推、该拉还是有冲突 */
+const COMPARE_STYLE: Record<SyncComparison["kind"], { icon: string; cls: string }> = {
+  synced: { icon: "✓", cls: "text-emerald-700" },
+  localAhead: { icon: "▲", cls: "text-amber-700" },
+  noCloud: { icon: "▲", cls: "text-amber-700" },
+  behind: { icon: "▼", cls: "text-sky-700" },
+  diverged: { icon: "⚠", cls: "text-red-700" },
+  cloudBehind: { icon: "⚠", cls: "text-red-700" },
+  pending: { icon: "⏳", cls: "text-amber-700" },
+};
+
 function formatBytes(n: number): string {
   if (n < 1024 * 1024) return Math.max(1, Math.round(n / 1024)) + " KB";
   return (n / 1024 / 1024).toFixed(1) + " MB";
@@ -65,6 +77,13 @@ function formatDateTime(iso: string): string {
   });
 }
 
+/** 云端行的更新时间是 epoch 秒（DATETIME 无时区，后端直接给 epoch 才不会猜错） */
+function formatEpoch(secs: number): string {
+  const d = new Date(secs * 1000);
+  // toISOString() 在 Invalid Date 上会抛 RangeError，先判一次
+  return Number.isNaN(d.getTime()) ? "" : formatDateTime(d.toISOString());
+}
+
 export default function Settings({ updater }: { updater: UpdaterController }) {
   const [value, setValue] = useState<SettingsType | null>(null);
   // 最近一次「已保存」的设置快照：版本与更新区的开关即时生效，保存时要以它为基线，
@@ -84,6 +103,14 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncConflict, setSyncConflict] = useState<{ action: "push" | "pull"; message: string } | null>(null);
   const [syncError, setSyncError] = useState("");
+  const [compare, setCompare] = useState<SyncComparison | null>(null);
+  const [compareBusy, setCompareBusy] = useState(false);
+  const [compareError, setCompareError] = useState("");
+  // 防重入用 ref：sync 状态刷新会触发自动重查，闭包里捕获的 compareBusy 可能是旧值。
+  // 单飞期间被触发的重查不能丢：否则慢网络下「保存配置」触发的重查被飞行中的旧请求
+  // 吞掉，结论框会一直显示旧服务器的状态（rerunRef 落地后补跑一次）。
+  const comparingRef = useRef(false);
+  const rerunRef = useRef(false);
   const [loadError, setLoadError] = useState("");
   const [syncAction, setSyncAction] = useState<"discard" | "clearError" | "repair" | null>(null);
   const { notice, notify } = useNotice();
@@ -276,6 +303,40 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
       setSyncBusy(false);
     }
   };
+
+  /** 查一次「本机 vs 云端」状态；失败只记错误文案，不挡设置页其它功能 */
+  const runCompare = async () => {
+    if (comparingRef.current) {
+      // 飞行中（可能还挂着旧凭据）：记下补跑，落地后用最新状态再查一次
+      rerunRef.current = true;
+      return;
+    }
+    comparingRef.current = true;
+    setCompareBusy(true);
+    try {
+      setCompare(await api.syncCompare());
+      setCompareError("");
+    } catch (e) {
+      setCompare(null);
+      setCompareError(errorMessage(e));
+    } finally {
+      comparingRef.current = false;
+      setCompareBusy(false);
+      if (rerunRef.current) {
+        rerunRef.current = false;
+        void runCompare();
+      }
+    }
+  };
+
+  // 启用同步且状态文件正常时自动查一次云端：sync 每次刷新（保存配置 / 推送 / 拉取后）
+  // 都会带出重查，用户不点「刷新」也能看到最新结论。pending 也放行——后端会短路成
+  // 「待应用」结论，不联网。
+  useEffect(() => {
+    if (!sync || !sync.enabled || sync.warning) return;
+    void runCompare();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sync]);
 
   const runSync = async (action: "push" | "pull", force = false) => {
     if (syncBusy) return;
@@ -772,6 +833,45 @@ export default function Settings({ updater }: { updater: UpdaterController }) {
                 ? "快照已下载但这次没能应用（多因数据库被其他程序短暂占用），重启应用后会自动重试；也可点「放弃待应用快照」。"
                 : "可以重新拉取，或点「清除错误提示」忽略。"}
             </p>
+          )}
+
+          {/* 本机 vs 云端状态：结论一行 + 云端详情一行；自动查一次，也可手动刷新 */}
+          {sync?.enabled && (
+            <div className="mt-3 rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-[11px] leading-relaxed">
+              <div className="flex items-start justify-between gap-2">
+                {compare ? (
+                  <p className={`font-medium ${COMPARE_STYLE[compare.kind].cls}`}>
+                    {COMPARE_STYLE[compare.kind].icon} {compare.message}
+                  </p>
+                ) : (
+                  <p className="font-medium text-stone-500">
+                    {compareBusy ? "⏳ 正在对比本机与云端…" : "⏳ 云端状态未知"}
+                  </p>
+                )}
+                <button
+                  onClick={() => void runCompare()}
+                  disabled={compareBusy || syncBusy}
+                  className="shrink-0 rounded border border-stone-200 bg-white px-2 py-0.5 text-[11px] font-normal text-stone-500 hover:bg-stone-100 disabled:opacity-50"
+                >
+                  刷新
+                </button>
+              </div>
+              {compare?.remoteVersion != null && (
+                <p className="mt-1 text-stone-400">
+                  云端版本 v{compare.remoteVersion}
+                  {compare.remoteUpdatedBy ? ` · 由「${compare.remoteUpdatedBy}」` : ""}
+                  {compare.remoteUpdatedAt != null && formatEpoch(compare.remoteUpdatedAt)
+                    ? ` · 更新于 ${formatEpoch(compare.remoteUpdatedAt)}`
+                    : ""}
+                  {" "}· 本机记录 v{compare.knownVersion}
+                </p>
+              )}
+              {compareError && (
+                <p className="mt-1 text-amber-700">
+                  云端状态查询失败：{compareError}。不影响本机使用，可稍后点「刷新」重试。
+                </p>
+              )}
+            </div>
           )}
 
           <div className="mt-3 rounded-md bg-stone-50 px-3 py-2 text-[11px] leading-relaxed text-stone-500">

@@ -100,6 +100,7 @@ pub fn run() {
             commands::system::speak_text,
             commands::system::stop_speak,
             commands::sync::sync_status,
+            commands::sync::sync_compare,
             commands::sync::save_sync_config,
             commands::sync::test_sync_connection,
             commands::sync::sync_push,

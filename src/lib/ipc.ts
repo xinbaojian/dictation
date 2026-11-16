@@ -17,6 +17,7 @@ import type {
   SessionSummary,
   Settings,
   SplitResult,
+  SyncComparison,
   SyncConfig,
   SyncOutcome,
   SyncStatus,
@@ -147,6 +148,8 @@ export const api = {
 
   // 跨设备同步：默认完全离线，只有配置了自有 MySQL 才会有网络请求
   syncStatus: () => invoke<SyncStatus>("sync_status"),
+  /** 对比本机与云端状态（领先/落后/一致）：轻量查询云端版本/设备/时间，不下载快照 */
+  syncCompare: () => invoke<SyncComparison>("sync_compare"),
   /** password 传 null / 空串表示沿用已保存的密码；状态返回值永远不含密码 */
   saveSyncConfig: (config: SyncConfig, password: string | null) =>
     invoke<SyncStatus>("save_sync_config", { config, password }),

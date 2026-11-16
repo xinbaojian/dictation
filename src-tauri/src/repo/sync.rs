@@ -443,10 +443,32 @@ pub enum PushOutcome {
     Conflict(u32),
 }
 
+/// 云端行的轻量「头部」信息：状态对比（`sync_compare`）只查这些，不下载整份快照。
+/// `device_name / app_version / updated_at` 只做展示，任何影响数据安全的判定
+/// 都不依赖它们（与 `RemoteSnapshot` 的诊断列同一约定）。
+#[derive(Debug, Clone)]
+pub struct RemoteHead {
+    pub version: u32,
+    /// 云端是否已有快照数据（建表占位行的 data 为空 = 还没有设备推送过）
+    pub has_data: bool,
+    pub device_id: String,
+    pub device_name: String,
+    /// 诊断用（云端快照由哪个程序版本生成），与 `RemoteSnapshot` 的诊断列同例
+    #[allow(dead_code)]
+    pub app_version: String,
+    /// 云端行的更新时间（epoch 秒）。用 `UNIX_TIMESTAMP` 而不是 `DATE_FORMAT`：
+    /// DATETIME 本身无时区，拼个 Z 后缀等于谎称 UTC，服务器跑本地时间时差 8 小时；
+    /// epoch 交给前端按本机时区格式化才总是对的。
+    pub updated_at: i64,
+}
+
 pub trait SnapshotStore: Send + Sync {
     fn fetch(&self) -> AppResult<RemoteSnapshot>;
     fn push(&self, expected: u32, data: &[u8], meta: &SnapshotMeta) -> AppResult<PushOutcome>;
     fn server_version(&self) -> AppResult<String>;
+    /// 只查版本 / 设备 / 时间，**不搬 data 大列**：状态对比每次打开设置页都可能跑，
+    /// 为看个状态下载几 MB 快照太重。
+    fn head(&self) -> AppResult<RemoteHead>;
 }
 
 pub struct MysqlStore {
@@ -545,6 +567,30 @@ impl SnapshotStore for MysqlStore {
         conn.query_first("SELECT VERSION()")
             .map_err(|e| AppError::msg(format!("连接测试失败：{e}")))?
             .ok_or_else(|| AppError::msg("连接测试没有返回结果"))
+    }
+
+    /// 状态对比专用：不 SELECT data 大列。`OCTET_LENGTH` 判断云端是否为空；
+    /// `UNIX_TIMESTAMP` 让 DATETIME 变成 epoch 秒（按会话时区正确换算），
+    /// 前端拿数字格式化，不用猜服务器时区。
+    fn head(&self) -> AppResult<RemoteHead> {
+        let mut conn = self.connect()?;
+        let row: Option<(u32, u64, String, String, String, i64)> = conn
+            .query_first(
+                "SELECT version, OCTET_LENGTH(data), device_id, device_name, app_version,
+                        UNIX_TIMESTAMP(updated_at)
+                 FROM dictation_snapshot WHERE id = 1",
+            )
+            .map_err(|e| AppError::msg(format!("读取云端状态失败：{e}")))?;
+        let (version, data_len, device_id, device_name, app_version, updated_at) =
+            row.ok_or_else(|| AppError::msg("云端快照表还没初始化，请先在服务器建表"))?;
+        Ok(RemoteHead {
+            version,
+            has_data: data_len > 0,
+            device_id,
+            device_name,
+            app_version,
+            updated_at,
+        })
     }
 }
 
@@ -1564,6 +1610,212 @@ fn perform_pull_with(
     })
 }
 
+// ---------------------------------------------------------------- 状态对比
+
+/// `sync_compare` 的执行计划：与 push / pull 一致，先在持有连接的命令线程里算好
+/// 本机事实（哈希 / 空库 / pending / 状态），网络 I/O 再交给 spawn_blocking。
+pub struct ComparePlan {
+    cfg: SyncConfigDto,
+    password: String,
+    local_hash: String,
+    local_empty: bool,
+    pending: bool,
+    state: SyncState,
+}
+
+impl ComparePlan {
+    /// 「本机自上次同步点之后有没有改动」：口径与 `decide_pull` 严格一致——
+    /// 从没同步过时只有本机确实录过东西才算「有改动」，空库的新机器不吓人。
+    fn local_changed(&self) -> bool {
+        if self.state.last_synced_hash.is_empty() {
+            !self.local_empty
+        } else {
+            self.local_hash != self.state.last_synced_hash
+        }
+    }
+}
+
+/// 设置页「本地 vs 云端」的对比结论。`remote_*` 只有真的查过云端才有值
+/// （有待应用快照时直接短路成 pending，不联网）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncComparison {
+    /// pending / noCloud / cloudBehind / synced / localAhead / behind / diverged
+    pub kind: String,
+    pub message: String,
+    /// 本机自上次同步点之后有没有改动
+    pub local_changed: bool,
+    /// 本机是否一条业务数据都没有（新装机器）
+    pub local_empty: bool,
+    /// 云端当前版本；pending 短路（未联网）时为 None
+    pub remote_version: Option<u32>,
+    /// 本机记录的云端版本（上次同步成功时的值）
+    pub known_version: u32,
+    /// 云端最后一次推送的设备名（空则回退 device_id）
+    pub remote_updated_by: String,
+    /// 云端行的更新时间（epoch 秒）；pending 短路（未联网）时为 None
+    pub remote_updated_at: Option<i64>,
+}
+
+pub fn prepare_compare(conn: &Connection, dir: &Path) -> AppResult<ComparePlan> {
+    let (cfg, password) = require_creds(dir, true)?;
+    Ok(ComparePlan {
+        cfg,
+        password,
+        local_hash: content_hash(conn)?,
+        local_empty: library_is_empty(conn)?,
+        pending: pending_path(dir).exists(),
+        // 状态损坏时严格报错：没有 remote_version 就无从比版本。这只影响状态展示，
+        // 推送/拉取的拦截不受影响（它们各自还会 load_state 并严格报错）。
+        state: load_state(dir)?,
+    })
+}
+
+/// 状态对比的判定，抽成纯函数是为了把七种分支全部单测到位。
+/// `remote = None` 表示没查云端（有待应用快照时短路，不联网）。
+/// `local_empty` 只影响 noCloud 的文案（本机是「完好」还是「也空了」），不影响 kind。
+/// 刻意**不**用云端行的 hash 列：列可能被手工改过，判定一律只用版本号
+/// （数据安全相关的判定在 push / pull 里本来就用校验过的快照元数据兜底）。
+fn classify_sync(
+    local_changed: bool,
+    local_empty: bool,
+    known_version: u32,
+    remote: Option<&RemoteHead>,
+) -> (&'static str, String) {
+    let Some(remote) = remote else {
+        return (
+            "pending",
+            "有下载好的快照待应用：重启应用生效后，本机就是云端的内容，无需推送或拉取".into(),
+        );
+    };
+    if !remote.has_data {
+        // known_version > 0 说明本机曾同步过：云端此刻却没数据 = 行被手工清空过。
+        // 此时本机不一定还有数据（删库重建后状态文件仍在、版本号不归零），
+        // 文案必须按本机实际状态说，否则状态框就是在撒谎
+        if known_version > 0 {
+            return if local_empty {
+                (
+                    "noCloud",
+                    format!(
+                        "云端快照不见了（本机记录的版本是 v{known_version}，可能被手工清空）；\
+                         本机词库也是空的，请先在本机录词或从备份恢复，再点「推送到云端」"
+                    ),
+                )
+            } else {
+                (
+                    "noCloud",
+                    format!(
+                        "云端快照不见了（本机记录的版本是 v{known_version}，可能被手工清空）；\
+                         本机数据完好，建议点「推送到云端」重新上传"
+                    ),
+                )
+            };
+        }
+        return if local_changed {
+            (
+                "noCloud",
+                "云端还没有快照；本机数据尚未上传，建议点「推送到云端」".into(),
+            )
+        } else {
+            (
+                "noCloud",
+                "云端和本机都还没有数据；先在一台电脑上录词，再点「推送到云端」".into(),
+            )
+        };
+    }
+    match remote.version.cmp(&known_version) {
+        std::cmp::Ordering::Less => (
+            "cloudBehind",
+            format!(
+                "云端版本（v{}）低于本机记录（v{}），云端快照可能被重置过；\
+                 推送会以本机为准覆盖云端，拉取会把本机数据回退，请谨慎选择",
+                remote.version, known_version
+            ),
+        ),
+        std::cmp::Ordering::Equal => {
+            if local_changed {
+                (
+                    "localAhead",
+                    "本地领先：上次同步后本机有改动还没上传，建议点「推送到云端」".into(),
+                )
+            } else {
+                (
+                    "synced",
+                    format!("本机与云端一致（版本 v{}），无需操作", remote.version),
+                )
+            }
+        }
+        std::cmp::Ordering::Greater => {
+            if local_changed {
+                (
+                    "diverged",
+                    "本机与云端都有各自的改动：推送会覆盖云端，拉取会用云端覆盖本机\
+                     （两边都会先弹确认并自动备份），需要你决定保留哪一边"
+                        .into(),
+                )
+            } else {
+                (
+                    "behind",
+                    format!(
+                        "本地落后：云端已更新到 v{}（本机没有未上传的改动），建议点「从云端拉取」",
+                        remote.version
+                    ),
+                )
+            }
+        }
+    }
+}
+
+pub fn perform_compare(plan: ComparePlan) -> AppResult<SyncComparison> {
+    let local_changed = plan.local_changed();
+    // 有待应用快照时本机库还没换成云端那份，比版本没有意义，也不必联网
+    if plan.pending {
+        let (kind, message) =
+            classify_sync(local_changed, plan.local_empty, plan.state.remote_version, None);
+        return Ok(SyncComparison {
+            kind: kind.into(),
+            message,
+            local_changed,
+            local_empty: plan.local_empty,
+            remote_version: None,
+            known_version: plan.state.remote_version,
+            remote_updated_by: String::new(),
+            remote_updated_at: None,
+        });
+    }
+    let store = MysqlStore::new(&plan.cfg, &plan.password)?;
+    perform_compare_with(&store, plan)
+}
+
+/// 抽出来给单测用假 store 覆盖各分支（与 push / pull 同一套路）。
+fn perform_compare_with(
+    store: &dyn SnapshotStore,
+    plan: ComparePlan,
+) -> AppResult<SyncComparison> {
+    let local_changed = plan.local_changed();
+    let head = store.head()?;
+    let (kind, message) = classify_sync(
+        local_changed,
+        plan.local_empty,
+        plan.state.remote_version,
+        Some(&head),
+    );
+    Ok(SyncComparison {
+        kind: kind.into(),
+        message,
+        local_changed,
+        local_empty: plan.local_empty,
+        remote_version: Some(head.version),
+        known_version: plan.state.remote_version,
+        remote_updated_by: if head.device_name.is_empty() {
+            head.device_id.clone()
+        } else {
+            head.device_name.clone()
+        },
+        remote_updated_at: Some(head.updated_at),
+    })
+}
+
 // ---------------------------------------------------------------- 单测
 
 #[cfg(test)]
@@ -2541,6 +2793,191 @@ mod tests {
         );
     }
 
+    fn remote_head(version: u32, has_data: bool) -> RemoteHead {
+        RemoteHead {
+            version,
+            has_data,
+            device_id: "dev-a".into(),
+            device_name: "书房".into(),
+            app_version: "0.2.1".into(),
+            updated_at: 1763280000,
+        }
+    }
+
+    /// classify_sync 七种分支全覆盖（纯函数，不碰网络）。
+    /// kind 是设置页决定「该推还是该拉」的唯一依据，分支错了会引导用户覆盖错方向。
+    #[test]
+    fn classify_sync_covers_all_branches() {
+        // pending：没查云端（有待应用快照时短路）
+        assert_eq!(classify_sync(true, false, 3, None).0, "pending");
+        assert_eq!(classify_sync(false, true, 3, None).0, "pending");
+        // 云端空：本地有数据 / 本地也空 / 曾同步过但本机已成空库（kind 不变，只有文案分流）
+        assert_eq!(classify_sync(true, false, 0, Some(&remote_head(0, false))).0, "noCloud");
+        assert_eq!(classify_sync(false, true, 0, Some(&remote_head(0, false))).0, "noCloud");
+        assert_eq!(classify_sync(false, true, 5, Some(&remote_head(0, false))).0, "noCloud");
+        // 云端版本低于本机记录（云端可能被重置过）
+        assert_eq!(classify_sync(false, false, 5, Some(&remote_head(3, true))).0, "cloudBehind");
+        assert_eq!(classify_sync(true, false, 5, Some(&remote_head(3, true))).0, "cloudBehind");
+        // 版本一致：本地改过 → 领先；没改 → 一致
+        assert_eq!(classify_sync(true, false, 3, Some(&remote_head(3, true))).0, "localAhead");
+        assert_eq!(classify_sync(false, false, 3, Some(&remote_head(3, true))).0, "synced");
+        // 云端更新：本地没改 → 落后；本地改过 → 分叉
+        assert_eq!(classify_sync(false, false, 3, Some(&remote_head(5, true))).0, "behind");
+        assert_eq!(classify_sync(true, false, 3, Some(&remote_head(5, true))).0, "diverged");
+    }
+
+    /// 文案必须把「往哪个方向操作」讲清楚，否则状态框就成了摆设。
+    #[test]
+    fn classify_sync_messages_point_to_the_right_action() {
+        let (_, msg) = classify_sync(true, false, 3, Some(&remote_head(3, true)));
+        assert!(msg.contains("推送"), "本地领先要建议推送：{msg}");
+        let (_, msg) = classify_sync(false, false, 3, Some(&remote_head(5, true)));
+        assert!(msg.contains("拉取"), "本地落后要建议拉取：{msg}");
+        let (_, msg) = classify_sync(true, false, 3, Some(&remote_head(5, true)));
+        assert!(msg.contains("推送") && msg.contains("拉取"), "分叉要把两个方向都摆出来：{msg}");
+        let (_, msg) = classify_sync(false, false, 5, Some(&remote_head(3, true)));
+        assert!(msg.contains("谨慎"), "云端版本倒退要提醒谨慎：{msg}");
+        let (_, msg) = classify_sync(true, false, 3, Some(&remote_head(0, false)));
+        assert!(msg.contains("推送"), "云端为空要引导首次推送：{msg}");
+        // 曾同步过的机器（known_version > 0）遇云端被清空：本机数据完好，
+        // 绝不能说「本机都还没有数据」，要引导重新推送
+        let (_, msg) = classify_sync(false, false, 5, Some(&remote_head(0, false)));
+        assert!(msg.contains("推送") && msg.contains("完好"), "{msg}");
+        assert!(!msg.contains("都还没有数据"), "曾同步过的本机不是空的：{msg}");
+        // 反例：曾同步过但本机已删库重建（空库）——不能再说「数据完好」
+        let (_, msg) = classify_sync(false, true, 5, Some(&remote_head(0, false)));
+        assert!(msg.contains("也是空的"), "{msg}");
+        assert!(!msg.contains("完好"), "空库不是完好的：{msg}");
+        assert!(msg.contains("推送") || msg.contains("恢复"), "{msg}");
+    }
+
+    /// 端到端（假云端）：同一台机器经历「一致 → 本地加词 → 云端被别人推进」三种状态。
+    #[test]
+    fn compare_reflects_local_and_remote_changes() {
+        let dir = temp_dir("cmp-flow");
+        save_test_creds(&dir);
+        let local = db::open_memory();
+        let g = groups::create(&local, None, "1", "第一单元").unwrap();
+        words::add(&local, g.id, "春天", None).unwrap();
+        let hash = content_hash(&local).unwrap();
+
+        // 本机与云端同内容同版本 → synced，且云端详情（版本/设备）要能展示
+        let snap = create_snapshot(&local, &dir, &meta(hash.clone())).unwrap();
+        let remote = RemoteSnapshot {
+            version: 4,
+            data: fs::read(&snap).unwrap(),
+            content_hash: hash.clone(),
+            app_version: "0.2.1".into(),
+            user_version: crate::db::latest_user_version(),
+        };
+        let _ = fs::remove_file(&snap);
+        let store = FakeStore::new(remote);
+        save_state(
+            &dir,
+            &SyncState {
+                device_id: "dev-local".into(),
+                last_synced_hash: hash.clone(),
+                remote_version: 4,
+                ..SyncState::default()
+            },
+        )
+        .unwrap();
+        let out = perform_compare_with(&store, prepare_compare(&local, &dir).unwrap()).unwrap();
+        assert_eq!(out.kind, "synced");
+        assert!(!out.local_changed);
+        assert_eq!(out.remote_version, Some(4));
+        assert_eq!(out.known_version, 4);
+        assert_eq!(out.remote_updated_by, "书房");
+
+        // 本机加词（云端没动）→ localAhead
+        words::add(&local, g.id, "夏天", None).unwrap();
+        let out = perform_compare_with(&store, prepare_compare(&local, &dir).unwrap()).unwrap();
+        assert_eq!(out.kind, "localAhead");
+        assert!(out.local_changed);
+
+        // 云端被另一台推进（4 → 6），本机也改过 → diverged
+        store.row.lock().unwrap().as_mut().unwrap().version = 6;
+        let out = perform_compare_with(&store, prepare_compare(&local, &dir).unwrap()).unwrap();
+        assert_eq!(out.kind, "diverged");
+
+        // 本机回到基准（等价于没改过），云端已推进 → behind
+        save_state(
+            &dir,
+            &SyncState {
+                device_id: "dev-local".into(),
+                last_synced_hash: content_hash(&local).unwrap(),
+                remote_version: 4,
+                ..SyncState::default()
+            },
+        )
+        .unwrap();
+        let out = perform_compare_with(&store, prepare_compare(&local, &dir).unwrap()).unwrap();
+        assert_eq!(out.kind, "behind");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 从没同步过 + 本机已有词 + 云端有数据 → diverged（首次同步必须选边，不能装作落后）。
+    #[test]
+    fn compare_treats_unsynced_library_as_diverged() {
+        let dir = temp_dir("cmp-unsynced");
+        save_test_creds(&dir);
+        let local = db::open_memory();
+        let g = groups::create(&local, None, "9", "本地单元").unwrap();
+        words::add(&local, g.id, "秋天", None).unwrap();
+
+        let (remote, _) = fake_remote("cmp-unsynced");
+        let store = FakeStore::new(remote);
+        let out = perform_compare_with(&store, prepare_compare(&local, &dir).unwrap()).unwrap();
+        assert_eq!(out.kind, "diverged");
+        assert!(out.local_changed, "从未同步且有数据，必须算「本地有改动」");
+
+        // 空库的新机器（从未同步）→ behind：直接建议拉取，与首次拉取不弹确认的口径一致
+        let empty = db::open_memory();
+        let out = perform_compare_with(&store, prepare_compare(&empty, &dir).unwrap()).unwrap();
+        assert_eq!(out.kind, "behind");
+        assert!(!out.local_changed);
+        assert!(out.local_empty);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 云端还是空占位行 → noCloud，且文案引导推送。
+    #[test]
+    fn compare_reports_empty_cloud() {
+        let dir = temp_dir("cmp-empty-cloud");
+        save_test_creds(&dir);
+        let local = db::open_memory();
+        let g = groups::create(&local, None, "1", "第一单元").unwrap();
+        words::add(&local, g.id, "春天", None).unwrap();
+        let store = FakeStore::new(RemoteSnapshot {
+            version: 0,
+            data: vec![],
+            content_hash: String::new(),
+            app_version: String::new(),
+            user_version: 0,
+        });
+
+        let out = perform_compare_with(&store, prepare_compare(&local, &dir).unwrap()).unwrap();
+        assert_eq!(out.kind, "noCloud");
+        assert!(out.message.contains("推送"), "{}", out.message);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 有待应用快照时直接给 pending 结论，绝不联网（本机库还没换成云端那份，比版本没意义）。
+    #[test]
+    fn compare_short_circuits_when_pending_without_network() {
+        let dir = temp_dir("cmp-pending");
+        save_test_creds(&dir);
+        write_pending(&dir, b"placeholder").unwrap();
+        let local = db::open_memory();
+        let store = FakeStore::new(fake_remote("cmp-pending").0);
+
+        let out = perform_compare(prepare_compare(&local, &dir).unwrap()).unwrap();
+        assert_eq!(out.kind, "pending");
+        assert_eq!(out.remote_version, None, "没联网就不该装作知道云端版本");
+        assert_eq!(store.head_calls(), 0, "pending 时不该查云端");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     fn save_test_creds(dir: &Path) {
         let cfg = SyncConfigDto {
             enabled: true,
@@ -2592,6 +3029,7 @@ mod tests {
         /// None = 不注入。
         bump_from_nth_push: std::sync::Mutex<Option<(usize, u32)>>,
         push_count: std::sync::Mutex<usize>,
+        head_count: std::sync::Mutex<usize>,
     }
 
     impl FakeStore {
@@ -2600,12 +3038,17 @@ mod tests {
                 row: std::sync::Mutex::new(Some(remote)),
                 bump_from_nth_push: std::sync::Mutex::new(None),
                 push_count: std::sync::Mutex::new(0),
+                head_count: std::sync::Mutex::new(0),
             }
         }
 
         /// 让第 N 次 push（1 起）先经历一次「版本已被别人推进」
         fn bump_on_nth_push(&self, nth: usize, to: u32) {
             *self.bump_from_nth_push.lock().unwrap() = Some((nth, to));
+        }
+
+        fn head_calls(&self) -> usize {
+            *self.head_count.lock().unwrap()
         }
     }
 
@@ -2644,6 +3087,18 @@ mod tests {
         }
         fn server_version(&self) -> AppResult<String> {
             Ok("8.0.43".into())
+        }
+        fn head(&self) -> AppResult<RemoteHead> {
+            *self.head_count.lock().unwrap() += 1;
+            let r = self.row.lock().unwrap().clone().unwrap();
+            Ok(RemoteHead {
+                version: r.version,
+                has_data: !r.data.is_empty(),
+                device_id: "dev-a".into(),
+                device_name: "书房".into(),
+                app_version: "0.2.1".into(),
+                updated_at: 1763280000,
+            })
         }
     }
 
@@ -3622,6 +4077,10 @@ mod tests {
         let got = store.fetch().unwrap();
         assert_eq!(got.data, bytes, "云端读回的快照必须与上传一致");
         assert_eq!(got.content_hash, hash);
+        let h = store.head().unwrap();
+        assert!(h.has_data, "推送后轻量查询必须看到云端有数据");
+        assert_eq!(h.version, base + 1);
+        assert!(!h.device_name.is_empty(), "head 要能带回设备名供状态展示");
 
         match store.push(base, &bytes, &m).unwrap() {
             PushOutcome::Conflict(v) => assert_eq!(v, base + 1, "过期版本必须被 CAS 拒绝"),
@@ -3637,6 +4096,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(store.fetch().unwrap().version, 0);
+        assert!(!store.head().unwrap().has_data, "恢复现场后云端应回到空占位行");
         let _ = fs::remove_dir_all(&dir);
     }
 }

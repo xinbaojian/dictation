@@ -1,5 +1,5 @@
 use crate::error::{AppError, AppResult};
-use crate::repo::sync::{self, SyncConfigDto, SyncOutcome, SyncStatus};
+use crate::repo::sync::{self, SyncComparison, SyncConfigDto, SyncOutcome, SyncStatus};
 use crate::AppState;
 use tauri::State;
 
@@ -15,6 +15,19 @@ fn join<T, E>(r: Result<AppResult<T>, E>) -> AppResult<T> {
 #[tauri::command]
 pub fn sync_status(state: State<'_, AppState>) -> AppResult<SyncStatus> {
     sync::status(&state.data_dir)
+}
+
+/// 对比本机与云端状态（领先/落后/一致），告诉设置页该推送还是拉取。
+/// 只做轻量查询（版本 / 设备 / 时间），不下载快照。
+#[tauri::command]
+pub async fn sync_compare(state: State<'_, AppState>) -> AppResult<SyncComparison> {
+    let dir = state.data_dir.clone();
+    // conn 只在这个块里持有，绝不跨 await
+    let plan = {
+        let conn = state.conn()?;
+        sync::prepare_compare(&conn, &dir)
+    }?;
+    join(tauri::async_runtime::spawn_blocking(move || sync::perform_compare(plan)).await)
 }
 
 /// 密码只在写入时出现；`password = None` 表示沿用已保存的密码。

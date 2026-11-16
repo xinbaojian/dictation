@@ -99,7 +99,7 @@ Tailscale 解封装后走 `tailscale0`，不经安全组，收紧公网不影响
 用户确认后可用「重置同步状态」把坏文件隔离到 `backups/sync/` 并重建；`remoteVersion` 归零后下一次同步会先走确认流程，
 不会静默覆盖云端。
 
-`content_hash`（`repo/sync.rs`）对 `TABLES` 里的业务表（groups / words / sessions / session_items / ai_cards）
+`content_hash`（`repo/sync.rs`）对 `TABLES` 里的业务表（groups / words / sessions / session_items / ai_cards / char_cards）
 `SELECT *` 逐行逐列算 sha256：自动适配列变化，但**新增业务表必须同步加进 `TABLES`**。
 旧 4 表在 `TABLES` 中的相对顺序是旧快照哈希逐字节兼容的前提，只能追加、不能重排（有 `legacy_four_table_hash` 测试钉住）。
 刻意排除 `_sync_meta`（同步元数据）与 `settings`（字号 / 遮罩秒数 / 错题本出本阈值）——
@@ -139,18 +139,42 @@ Tailscale 解封装后走 `tailscale0`，不经安全组，收紧公网不影响
 拉取得到的是 `pending`，**必须重启应用才生效**；设置页会显示提示并给「立即重启」按钮。
 没重启就继续默写也没关系：`apply_pending` 发现本机内容已经不是拉取时那份，会作废 pending 并提示重新拉取。
 
+## 状态对比（设置页「本地 vs 云端」）
+
+设置页的同步卡片会告诉用户当前该推送还是拉取。`sync_compare` 只对云端做**轻量查询**
+（version / 设备名 / 更新时间 / `OCTET_LENGTH(data)`，不下载快照大列），判定信号是
+「本机记录的 `remoteVersion` vs 云端当前 version」+「本机 `content_hash` vs
+`lastSyncedHash`」（口径与 `decide_pull` 完全一致）：
+
+| 判定 | kind | 提示 |
+|---|---|---|
+| 有待应用快照 | `pending` | 重启后生效（直接短路，不联网） |
+| 云端没数据 | `noCloud` | 建议先推送；本机曾同步过（`knownVersion>0`）则提示「快照不见了、建议重推」，本机也成空库时改提示先录词 / 从备份恢复 |
+| 云端版本 < 本机记录 | `cloudBehind` | 云端可能被重置过，谨慎选择方向 |
+| 版本相等、本地改过 | `localAhead` | 本地领先，建议推送 |
+| 版本相等、本地没改 | `synced` | 一致，无需操作 |
+| 云端更新、本地没改 | `behind` | 本地落后，建议拉取 |
+| 云端更新、本地也改过 | `diverged` | 需选择保留哪边（推送/拉取都会先确认+备份） |
+
+刻意**不**用云端行的 `hash` 列做判定（列可能被手工改过，与「判定只用校验过的快照元数据」
+同一哲学）；`updated_at` 用 `UNIX_TIMESTAMP` 取 epoch 秒——DATETIME 本身无时区，
+`DATE_FORMAT` 拼 `Z` 后缀等于谎称 UTC，服务器跑本地时间时显示会差 8 小时。
+已启用且无告警时打开设置页自动查一次；保存配置 / 推送 / 拉取后随 `sync_status`
+刷新自动重查；也可手动「刷新」。查询失败只显示错误文案，不禁用任何功能。
+
 ## 命令与代码位置
 
 | 命令 | 作用 |
 |---|---|
 | `sync_status` | 状态（不含密码）+ 是否有 pending |
+| `sync_compare` | 对比本机与云端谁领先（领先/落后/一致），轻量查询云端 version/设备/时间，不下载快照 |
 | `save_sync_config` | 保存配置；`password=null` 表示沿用旧密码 |
 | `test_sync_connection` | 连一次 `SELECT VERSION()` |
 | `sync_push` / `sync_pull` | `force` 表示用户已确认覆盖 |
 | `sync_discard_pending` | 放弃未应用的 `pending.db`（有 pending 时连带清待提交状态，并清失败提示），不动主库与主状态 |
 | `sync_repair_state` | 隔离损坏的 `.sync-state.json` 到 `backups/sync/` 并重建，仅 `stateCorrupt` 时可用 |
 
-共 7 个同步命令。`sync_status` 的返回值含 `warning` / `lastError` / `stateCorrupt`：
+共 8 个同步命令。`sync_status` 的返回值含 `warning` / `lastError` / `stateCorrupt`：
 本机同步文件损坏时降级展示，替换失败的原因单独回显，都不让一整个设置页卡在「加载中…」。
 设置页把状态读取与其他设置拆开单独取，并对放弃快照 / 重置状态做二次确认。
 
@@ -174,7 +198,7 @@ Tailscale 解封装后走 `tailscale0`，不经安全组，收紧公网不影响
 ## 验证
 
 ```bash
-cd src-tauri && cargo test                 # 全部单测（含 sync 的 53 个，拉取/推送用假 store 覆盖）
+cd src-tauri && cargo test                 # 全部单测（含 sync 的 63 个，拉取/推送用假 store 覆盖）
 # 真实服务器集成测试，默认忽略；跑完会把云端行恢复成空快照 + version 0
 DICTATION_SYNC_HOST=100.x.y.z DICTATION_SYNC_PORT=4407 \
 DICTATION_SYNC_DB=dictation_sync DICTATION_SYNC_USER=dictation \
