@@ -75,6 +75,9 @@ export const api = {
   /** 批量加入错题本；已在错题本的词后端跳过不重复计数 */
   addMistakes: (groupId: number, texts: string[]) =>
     invoke<BatchMistakeResult>("add_mistakes", { groupId, texts }),
+  /** 编辑错题词条：改文本 + 重标「不会写的字」，不动学习进度 */
+  updateMistake: (wordId: number, text: string, wrongChars: number[]) =>
+    invoke<Word>("update_mistake", { wordId, text, wrongChars }),
   setWordMastered: (wordId: number, mastered: boolean) =>
     invoke<void>("set_word_mastered", { wordId, mastered }),
 

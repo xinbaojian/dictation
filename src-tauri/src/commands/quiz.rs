@@ -131,6 +131,18 @@ pub fn add_mistakes(
     words::add_mistakes(&conn, group_id, &texts)
 }
 
+/// 编辑错题词条：改文本 + 覆盖写手工标错字；不动学习进度
+#[tauri::command]
+pub fn update_mistake(
+    state: State<'_, AppState>,
+    word_id: i64,
+    text: String,
+    wrong_chars: Vec<i64>,
+) -> AppResult<WordDto> {
+    let conn = state.conn()?;
+    words::update_mistake(&conn, word_id, &text, &wrong_chars)
+}
+
 #[tauri::command]
 pub fn set_word_mastered(
     state: State<'_, AppState>,

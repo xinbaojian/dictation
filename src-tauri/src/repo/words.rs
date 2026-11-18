@@ -186,6 +186,30 @@ pub fn add_mistakes(
     Ok(BatchMistakeResult { added, skipped_existing })
 }
 
+/// 编辑错题词条：改文本（复用 `update` 语义：清失效错字下标、删作废 AI 卡、
+/// 同组重名报错）后覆盖写手工标错字。不动 status / wrong_count / correct_streak。
+pub fn update_mistake(
+    conn: &Connection,
+    word_id: i64,
+    text: &str,
+    chars: &[i64],
+) -> AppResult<WordDto> {
+    let tx = conn.unchecked_transaction()?;
+    // update 的 note 参数传 None 会清空备注，必须先读回原值传回去
+    let note = get(&tx, word_id)?.note;
+    update(&tx, word_id, text, note.as_deref())?;
+    let text = normalize_word(text);
+    let len = text.chars().count() as i64;
+    let valid: Vec<i64> = chars.iter().copied().filter(|i| *i >= 0 && *i < len).collect();
+    tx.execute(
+        "UPDATE words SET wrong_chars = ?1 WHERE id = ?2",
+        params![format_char_indices(&valid), word_id],
+    )?;
+    let dto = get(&tx, word_id)?;
+    tx.commit()?;
+    Ok(dto)
+}
+
 /// 批量导入：已存在的词条跳过而不报错，返回实际写入与跳过数量
 pub fn import(conn: &Connection, group_id: i64, texts: &[String]) -> AppResult<ImportResult> {
     let tx = conn.unchecked_transaction()?;
@@ -635,6 +659,69 @@ mod tests {
         let r = add_mistakes(&conn, gid, &[]).unwrap();
         assert_eq!(r.added, 0);
         assert_eq!(r.skipped_existing, 0);
+    }
+
+    #[test]
+    fn update_mistake_only_chars_keeps_progress() {
+        let (conn, gid) = setup();
+        let w = add_mistake(&conn, gid, "春天", &[]).unwrap();
+        update_mistake(&conn, w.id, "春天", &[0]).unwrap();
+        let m = list_mistakes(&conn, None).unwrap();
+        assert_eq!(m[0].wrong_chars, vec![0]);
+        assert_eq!(m[0].wrong_count, 1, "编辑不是又错一次，不推进度");
+        // status 仍是 learning（还在错题本）
+        assert_eq!(get(&conn, w.id).unwrap().status, "learning");
+    }
+
+    #[test]
+    fn update_mistake_text_change_rewrites_chars_and_clears_ai_cards() {
+        let (conn, gid) = setup();
+        let w = add_mistake(&conn, gid, "春天", &[1]).unwrap();
+        crate::repo::ai_cards::upsert(
+            &conn,
+            w.id,
+            "mnemonic",
+            &crate::domain::ai_card::CardContent {
+                decomposition: vec![],
+                mnemonic: "口诀".into(),
+                confusables: vec![],
+                sentences: vec![],
+            },
+            "m",
+        )
+        .unwrap();
+        update_mistake(&conn, w.id, "春风", &[0, 9]).unwrap();
+        let m = list_mistakes(&conn, None).unwrap();
+        assert_eq!(m[0].wrong_chars, vec![0], "改文本后重标，越界下标 9 丢弃");
+        assert!(
+            crate::repo::ai_cards::get(&conn, w.id, "mnemonic").unwrap().is_none(),
+            "讲解卡针对旧字形，改文本后应删除"
+        );
+    }
+
+    #[test]
+    fn update_mistake_name_conflict_rolls_back() {
+        let (conn, gid) = setup();
+        let a = add_mistake(&conn, gid, "春天", &[0]).unwrap();
+        add(&conn, gid, "夏天", None).unwrap();
+        let err = update_mistake(&conn, a.id, "夏天", &[1]).unwrap_err();
+        assert!(err.to_string().contains("已有「夏天」"));
+        // 回滚：wrong_chars 不能残留半改状态
+        let m = list_mistakes(&conn, None)
+            .unwrap()
+            .into_iter()
+            .find(|x| x.id == a.id)
+            .unwrap();
+        assert_eq!(m.wrong_chars, vec![0], "报错时事务回滚，手工标错保持原样");
+    }
+
+    #[test]
+    fn update_mistake_preserves_note() {
+        let (conn, gid) = setup();
+        let w = add(&conn, gid, "春天", Some("课文第 4 课")).unwrap();
+        add_mistake(&conn, gid, "春天", &[]).unwrap();
+        update_mistake(&conn, w.id, "春天", &[0]).unwrap();
+        assert_eq!(get(&conn, w.id).unwrap().note.as_deref(), Some("课文第 4 课"));
     }
 
     #[test]
