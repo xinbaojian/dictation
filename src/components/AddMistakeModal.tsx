@@ -92,7 +92,11 @@ export default function AddMistakeModal({
   return (
     <Modal
       title="加入错题本"
-      subtitle="批量模式粘贴整段词语，按空格、逗号等分隔"
+      subtitle={
+        mode === "batch"
+          ? "批量模式粘贴整段词语，按空格、逗号等分隔"
+          : "词语会标成错题；可以点字记下「不会写」的字"
+      }
       width="max-w-md"
       onClose={onClose}
       footer={
@@ -134,6 +138,7 @@ export default function AddMistakeModal({
             <button
               key={m.key}
               onClick={() => setMode(m.key)}
+              aria-pressed={mode === m.key}
               className={
                 "flex-1 rounded-md px-3 py-1.5 text-sm transition " +
                 (mode === m.key
