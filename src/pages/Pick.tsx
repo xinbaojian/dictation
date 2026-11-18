@@ -71,8 +71,10 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
   }, []);
 
   useEffect(() => {
-    // 一个分组都没选时不查后端：空数组在后端表示「全部分组」，会显示成可抽全部
-    if (selected.length === 0) {
+    // 「全部词语 / 仅未掌握」下没选分组不查后端：空数组在后端表示「全部分组」，
+    // 会显示成可抽全部，容易误开局。
+    // 「错题本」例外：错题本本就是跨分组的，不选分组 = 全部错题（与错题本页一致）
+    if (selected.length === 0 && scope !== "mistake") {
       setCount(0);
       return;
     }
@@ -423,7 +425,11 @@ export default function Pick({ onStart, onReview, onGoWordbook }: PickProps) {
               {count > 0 && limit > 0 && count > limit ? "，本次抽 " + effectiveLimit + " 个" : ""}
             </p>
             <p className="mt-0.5 text-xs text-stone-400">
-              {selected.length === 0 ? "还没有选择分组" : "按上面的偏好抽词，抽完自动进入批改"}
+              {selected.length === 0
+                ? scope === "mistake"
+                  ? "未选分组 = 练全部错题"
+                  : "还没有选择分组"
+                : "按上面的偏好抽词，抽完自动进入批改"}
             </p>
           </div>
           <button
