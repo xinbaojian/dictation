@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
 import Modal from "./Modal";
 import { api } from "../lib/ipc";
-import type { Group, SplitResult } from "../types";
+import type { AddMistakeItem, Group, SplitResult } from "../types";
 
 interface AddMistakeModalProps {
   groups: Group[];
   defaultGroupId: number | null;
   /** 单个模式提交；成功与否由调用方处理：返回即复位按钮，错误用 Toast 提示 */
   onSubmit: (groupId: number, text: string, chars: number[]) => Promise<void>;
-  /** 批量模式提交（texts 已切分去重） */
-  onSubmitBatch: (groupId: number, texts: string[]) => Promise<void>;
+  /** 批量模式提交（items 已切分去重，可带每词错字下标） */
+  onSubmitBatch: (groupId: number, items: AddMistakeItem[]) => Promise<void>;
   onClose: () => void;
 }
 
@@ -28,6 +28,8 @@ export default function AddMistakeModal({
   const [chars, setChars] = useState<Set<number>>(new Set());
   const [batchText, setBatchText] = useState("");
   const [preview, setPreview] = useState<SplitResult | null>(null);
+  /** 批量模式就地点字：词文本 → 标错的字下标集合（提交时按现存词惰性取值） */
+  const [marked, setMarked] = useState<Map<string, Set<number>>>(new Map());
   const [busy, setBusy] = useState(false);
 
   const trimmed = text.trim();
@@ -76,12 +78,29 @@ export default function AddMistakeModal({
     }
   };
 
+  const toggleMark = (word: string, index: number) => {
+    setMarked((prev) => {
+      const next = new Map(prev);
+      const set = new Set(next.get(word) ?? []);
+      if (set.has(index)) set.delete(index);
+      else set.add(index);
+      next.set(word, set);
+      return next;
+    });
+  };
+
   const submitBatch = async () => {
     const words = preview?.words ?? [];
     if (words.length === 0 || !groupId || busy) return;
     setBusy(true);
     try {
-      await onSubmitBatch(groupId, words);
+      await onSubmitBatch(
+        groupId,
+        words.map((w) => ({
+          text: w,
+          wrongChars: [...(marked.get(w) ?? [])].sort((a, b) => a - b),
+        })),
+      );
     } finally {
       setBusy(false);
     }
@@ -238,15 +257,32 @@ export default function AddMistakeModal({
               {/* 容器常驻 + 固定最小高度：预览出现/消失时弹窗高度不跳 */}
               <div className="max-h-32 min-h-[3rem] overflow-y-auto rounded-md border border-stone-100 bg-stone-50/60 px-3 py-2">
                 {preview && preview.words.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {preview.words.map((w, i) => (
-                      <span
-                        key={i}
-                        className="rounded-md border border-stone-200 bg-white px-2 py-0.5 text-sm text-stone-700"
-                      >
-                        {w}
-                      </span>
-                    ))}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {preview.words.map((w) => {
+                      const marks = marked.get(w) ?? new Set<number>();
+                      return (
+                        <span
+                          key={w}
+                          className="flex items-center gap-0.5 rounded-md border border-stone-200 bg-white py-0.5 pl-1.5 pr-1"
+                        >
+                          {[...w].map((ch, i) => (
+                            <button
+                              key={i}
+                              onClick={() => toggleMark(w, i)}
+                              title="标记不会写的字"
+                              className={
+                                "rounded px-1 py-0.5 text-sm transition " +
+                                (marks.has(i)
+                                  ? "bg-rose-100 font-medium text-rose-800"
+                                  : "text-stone-700 hover:bg-stone-100")
+                              }
+                            >
+                              {ch}
+                            </button>
+                          ))}
+                        </span>
+                      );
+                    })}
                   </div>
                 ) : (
                   <p className="py-1.5 text-xs leading-5 text-stone-300">
@@ -255,7 +291,7 @@ export default function AddMistakeModal({
                 )}
               </div>
               <p className="mt-1.5 text-xs text-stone-400">
-                已在错题本里的词加入时会自动跳过；需要标「不会写的字」的词，加入后点「编辑」补
+                点词里的字可标记「不会写的字」；已在错题本里的词加入时会自动跳过，标的字仍会记录
               </p>
             </div>
           </>

@@ -4,7 +4,7 @@ import EditMistakeModal from "../components/EditMistakeModal";
 import ConfirmModal from "../components/ConfirmModal";
 import { Toast, useNotice } from "../components/Toast";
 import { api, errorMessage, formatTime } from "../lib/ipc";
-import type { Group, Mistake } from "../types";
+import type { AddMistakeItem, Group, Mistake } from "../types";
 
 interface MistakesProps {
   onStart: (sessionId: number) => void;
@@ -130,9 +130,9 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
     }
   };
 
-  const addMistakeBatch = async (groupId: number, texts: string[]) => {
+  const addMistakeBatch = async (groupId: number, items: AddMistakeItem[]) => {
     try {
-      const r = await api.addMistakes(groupId, texts);
+      const r = await api.addMistakes(groupId, items);
       setAddOpen(false);
       await reload(filter);
       setGroups(await api.listGroups());

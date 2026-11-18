@@ -55,6 +55,12 @@ export interface BatchMistakeResult {
   skippedExisting: number;
 }
 
+/** 批量加入错题本的一条：词语文本 + 手工标错字下标 */
+export interface AddMistakeItem {
+  text: string;
+  wrongChars: number[];
+}
+
 export interface SessionItem {
   id: number;
   seq: number;
