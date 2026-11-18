@@ -84,9 +84,11 @@
     }
 
     #[test]
-    fn add_mistakes_blank_input_rejected() {
+    fn add_mistakes_blank_input_ok() {
         let (conn, gid) = setup();
-        assert!(add_mistakes(&conn, gid, &[]).is_ok());
+        let r = add_mistakes(&conn, gid, &[]).unwrap();
+        assert_eq!(r.added, 0);
+        assert_eq!(r.skipped_existing, 0);
     }
 ```
 
@@ -889,7 +891,7 @@ Expected: 测试全 PASS（基线 251+ 新增 8 个用例）；clippy 无新增�
 
 - [ ] **Step 3: 起干净审查子 agent（按 AGENTS.md 审查流程）**
 
-prompt 自包含：文件清单（`git status --short` + `git diff main~4 --stat`）、硬约束、验证结果、输出格式（`文件:行号` + 触发路径 + P1/P2 + 最小修法）、只读。已知取舍（spec「已知取舍」三条 + note 保留逻辑）写进 prompt 防重复提。
+prompt 自包含：文件清单（`git status --short` + `git diff af1b74a..HEAD --stat`，af1b74a 是功能起点前最后一个提交）、硬约束、验证结果、输出格式（`文件:行号` + 触发路径 + P1/P2 + 最小修法）、只读。已知取舍（spec「已知取舍」三条 + note 保留逻辑）写进 prompt 防重复提。
 
 - [ ] **Step 4: 按审查结论修复/判定，收敛后写 memory + 提交**
 
