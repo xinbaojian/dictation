@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import AddMistakeModal from "../components/AddMistakeModal";
+import EditMistakeModal from "../components/EditMistakeModal";
 import ConfirmModal from "../components/ConfirmModal";
 import { Toast, useNotice } from "../components/Toast";
 import { api, errorMessage, formatTime } from "../lib/ipc";
@@ -57,6 +58,7 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
   const [filter, setFilter] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState<Mistake | null>(null);
   // 开始默写前先确认：默写会整屏切走，误点一下孩子就被打断，还平白多出一场记录
   const [askPractice, setAskPractice] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -134,6 +136,17 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
       await reload(filter);
       setGroups(await api.listGroups());
       notify("ok", "「" + word.text + "」已移出错题本");
+    } catch (e) {
+      notify("error", errorMessage(e));
+    }
+  };
+
+  const editMistake = async (word: Mistake, text: string, chars: number[]) => {
+    try {
+      await api.updateMistake(word.id, text, chars);
+      setEditing(null);
+      await reload(filter);
+      notify("ok", "「" + text + "」已更新");
     } catch (e) {
       notify("error", errorMessage(e));
     }
@@ -272,6 +285,12 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
                   <td className="py-2.5 text-xs text-stone-400">{formatTime(word.lastPracticedAt)}</td>
                   <td className="py-2.5 pr-8 text-right">
                     <button
+                      onClick={() => setEditing(word)}
+                      className="rounded px-2 py-1 text-xs text-stone-400 hover:bg-stone-100 hover:text-stone-700"
+                    >
+                      编辑
+                    </button>
+                    <button
                       onClick={() => master(word)}
                       className="rounded px-2 py-1 text-xs text-stone-400 hover:bg-emerald-50 hover:text-emerald-600"
                     >
@@ -302,6 +321,14 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
             setAskPractice(false);
             void practice();
           }}
+        />
+      )}
+
+      {editing && (
+        <EditMistakeModal
+          word={editing}
+          onSubmit={(text, chars) => editMistake(editing, text, chars)}
+          onClose={() => setEditing(null)}
         />
       )}
 
