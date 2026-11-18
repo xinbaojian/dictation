@@ -85,6 +85,7 @@ pub fn run() {
             commands::quiz::delete_session,
             commands::quiz::list_mistakes,
             commands::quiz::add_mistake,
+            commands::quiz::add_mistakes,
             commands::math::generate_math_sheet,
             commands::print::print_html,
             commands::quiz::set_word_mastered,

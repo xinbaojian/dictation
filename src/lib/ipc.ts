@@ -3,6 +3,7 @@ import type {
   AiCard,
   AiConfigView,
   BackupInfo,
+  BatchMistakeResult,
   CharCard,
   Group,
   GroupDeleteResult,
@@ -71,6 +72,9 @@ export const api = {
   /** 手工把词语加进错题本；wrongChars 是「不会写的字」下标（越界由后端丢弃） */
   addMistake: (groupId: number, text: string, wrongChars: number[]) =>
     invoke<Word>("add_mistake", { groupId, text, wrongChars }),
+  /** 批量加入错题本；已在错题本的词后端跳过不重复计数 */
+  addMistakes: (groupId: number, texts: string[]) =>
+    invoke<BatchMistakeResult>("add_mistakes", { groupId, texts }),
   setWordMastered: (wordId: number, mastered: boolean) =>
     invoke<void>("set_word_mastered", { wordId, mastered }),
 

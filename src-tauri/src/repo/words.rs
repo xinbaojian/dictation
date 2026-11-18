@@ -19,6 +19,13 @@ pub struct WordDto {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BatchMistakeResult {
+    pub added: i64,
+    pub skipped_existing: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImportResult {
     pub inserted: i64,
     pub skipped: i64,
@@ -140,6 +147,43 @@ pub fn add_mistake(
         params![format_char_indices(&merged), id],
     )?;
     get(conn, id)
+}
+
+/// 批量把词语加进错题本，单事务。
+///
+/// 已在该分组错题本（status='learning'）的词跳过且不重复计错误次数——
+/// 手工加入是「标记为错题」的幂等操作，重复粘贴同一份清单不虚增 wrong_count。
+/// 其余词逐条复用 `add_mistake` 语义（词条存在则复用 + mark_wrong，否则新建）。
+pub fn add_mistakes(
+    conn: &Connection,
+    group_id: i64,
+    texts: &[String],
+) -> AppResult<BatchMistakeResult> {
+    let tx = conn.unchecked_transaction()?;
+    let mut added = 0i64;
+    let mut skipped_existing = 0i64;
+    for raw in texts {
+        let text = normalize_word(raw);
+        if text.is_empty() {
+            return Err(AppError::msg("词语不能为空"));
+        }
+        let already: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM words
+                 WHERE group_id = ?1 AND text = ?2 AND status = 'learning'",
+                params![group_id, &text],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if already.is_some() {
+            skipped_existing += 1;
+            continue;
+        }
+        add_mistake(&tx, group_id, &text, &[])?;
+        added += 1;
+    }
+    tx.commit()?;
+    Ok(BatchMistakeResult { added, skipped_existing })
 }
 
 /// 批量导入：已存在的词条跳过而不报错，返回实际写入与跳过数量
@@ -535,6 +579,62 @@ mod tests {
         let m = list_mistakes(&conn, None).unwrap();
         assert_eq!(m.len(), 1, "已有词条不该报错，也不该重复建词");
         assert_eq!(m[0].wrong_chars, vec![0, 1]);
+    }
+
+    #[test]
+    fn add_mistakes_creates_and_reuses() {
+        let (conn, gid) = setup();
+        add(&conn, gid, "春天", None).unwrap();
+        let r = add_mistakes(&conn, gid, &["春天".into(), "夏天".into(), "秋天".into()]).unwrap();
+        assert_eq!(r.added, 3, "两个新词建词条、一个已有词条复用，都标错");
+        assert_eq!(r.skipped_existing, 0);
+        let m = list_mistakes(&conn, None).unwrap();
+        assert_eq!(m.len(), 3);
+        // 已有词条复用：错误次数从 0 涨到 1，词条 id 不变
+        let reused = m.iter().find(|x| x.text == "春天").unwrap();
+        assert_eq!(reused.wrong_count, 1);
+        assert!(m.iter().find(|x| x.text == "夏天").is_some());
+    }
+
+    #[test]
+    fn add_mistakes_skips_learning_without_counting() {
+        let (conn, gid) = setup();
+        add_mistake(&conn, gid, "春天", &[]).unwrap();
+        let before = list_mistakes(&conn, None).unwrap()[0].wrong_count;
+        let r =
+            add_mistakes(&conn, gid, &["春天".into(), "夏天".into()]).unwrap();
+        assert_eq!(r.added, 1);
+        assert_eq!(r.skipped_existing, 1);
+        let after = list_mistakes(&conn, None)
+            .unwrap()
+            .into_iter()
+            .find(|x| x.text == "春天")
+            .unwrap()
+            .wrong_count;
+        assert_eq!(before, after, "已在错题本的词跳过，错误次数不虚增");
+    }
+
+    #[test]
+    fn add_mistakes_rejects_blank_word_atomically() {
+        let (conn, gid) = setup();
+        let err = add_mistakes(&conn, gid, &["春天".into(), "  ".into()]).unwrap_err();
+        assert!(err.to_string().contains("词语不能为空"));
+        assert!(
+            list(&conn, gid).unwrap().is_empty(),
+            "事务回滚：第一条不能留下半批数据"
+        );
+        assert!(
+            list_mistakes(&conn, None).unwrap().is_empty(),
+            "错题本也不能有残留"
+        );
+    }
+
+    #[test]
+    fn add_mistakes_blank_input_ok() {
+        let (conn, gid) = setup();
+        let r = add_mistakes(&conn, gid, &[]).unwrap();
+        assert_eq!(r.added, 0);
+        assert_eq!(r.skipped_existing, 0);
     }
 
     #[test]

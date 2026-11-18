@@ -50,6 +50,11 @@ export interface ImportResult {
   skipped: number;
 }
 
+export interface BatchMistakeResult {
+  added: number;
+  skippedExisting: number;
+}
+
 export interface SessionItem {
   id: number;
   seq: number;

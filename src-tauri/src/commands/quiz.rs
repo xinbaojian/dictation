@@ -120,6 +120,17 @@ pub fn add_mistake(
     words::add_mistake(&conn, group_id, &text, &wrong_chars)
 }
 
+/// 批量把词语加进错题本；已在错题本（learning）的词跳过、不重复计数
+#[tauri::command]
+pub fn add_mistakes(
+    state: State<'_, AppState>,
+    group_id: i64,
+    texts: Vec<String>,
+) -> AppResult<words::BatchMistakeResult> {
+    let conn = state.conn()?;
+    words::add_mistakes(&conn, group_id, &texts)
+}
+
 #[tauri::command]
 pub fn set_word_mastered(
     state: State<'_, AppState>,
