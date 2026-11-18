@@ -42,7 +42,7 @@ related: [quiz-flow.md, architecture.md]
 | `wrong_count` | 累计答错次数，只增不减 |
 | `correct_streak` | 连续答对次数，答错归零 |
 | `last_practiced_at` | 最近一次被批改/手工加进错题本的时间 |
-| `wrong_chars` | **手工**加入错题本时标的错字下标（逗号分隔），与批改记录的 `session_items.wrong_chars` 合并展示；改词文本时清空 |
+| `wrong_chars` | **手工**加入错题本时标的错字下标（逗号分隔），与批改记录的 `session_items.wrong_chars` 合并展示；改词文本时清空；可经 `update_mistake` 编辑覆盖（改文本时旧下标自动清空重标） |
 
 唯一约束 `UNIQUE(group_id, text)`：同组不许重词。跨组允许重复，但抽题时会去重。
 

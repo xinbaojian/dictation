@@ -34,7 +34,7 @@ related: [architecture.md, decisions.md]
 | 抽题配置 | `pages/Pick.tsx` | 分组多选（默认全不选，未选时不可开始）、范围、题量（5 / 10 / 15 / 20 / 25 / 30 / 全部）、抽词偏好多选（反复错字 / 错过字 / 新词 / 上次写过的排后 / 同批不重字 / 连字，默认除连字外全选，全不选 = 纯随机）、可抽数量（120ms 防抖）；顶部「继续上次」横幅 |
 | 默写 | `pages/Quiz.tsx` | 进入即自动显示、到点遮罩、键盘快捷键、进度落库、`advancing` 锁 |
 | 批改 | `pages/Review.tsx` | 网格点错、`skip_marked` 预置、提交后 0.9s 跳转 |
-| 错题本 | `pages/Mistakes.tsx` | 分组筛选、连对进度条（读设置）、专项默写（**点击后先确认再开**，防误点）、打印、**手工加词并点字标错**（`AddMistakeModal`）、**进笔画复习（点词语直接从该词开始，路由带 `wordId`）** |
+| 错题本 | `pages/Mistakes.tsx` | 分组筛选、连对进度条（读设置）、专项默写（**点击后先确认再开**，防误点）、打印、**手工加词并点字标错**（`AddMistakeModal`，单个/批量双模式：批量粘贴按分隔符切分预览、已在错题本的跳过）、**行内编辑改文本+重标错字**（`EditMistakeModal`）、**进笔画复习（点词语直接从该词开始，路由带 `wordId`）** |
 | 笔画复习 | `pages/StrokeReview.tsx` | 逐词看笔顺动画（`components/StrokeWord.tsx` + `lib/strokes.ts`）、每字一个田字格、田字格上方逐字拼音（`lib/pinyin.ts`，多音字按词消歧，仅此页）、点格子只重播该字、「先自己写」遮住笔画后再对照、系统离线语音朗读（自动+手动，偏好记忆）、AI 巧记讲解卡（`components/MnemonicCard.tsx`，配置 AI 后可按需生成，遮蔽模式整卡隐藏，展开可自动读口诀）、空格/←/R 快捷键、可从指定词开始（错题本点词语；找不到时从头开始） |
 | 记录 | `pages/History.tsx` | 50 条列表 + 详情弹窗 + 只练本次错词 + 单条删除 |
 | 设置 | `pages/Settings.tsx` | 遮罩/连对/字号、备份导出导入、打开数据目录（连字已挪到抽题页的抽词偏好）、AI 讲解配置区块、朗读语音区块（`components/TtsSettings.tsx`：引擎切换 + 语音包下载/试听/删除，ADR-21） |
