@@ -130,6 +130,22 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
     }
   };
 
+  const addMistakeBatch = async (groupId: number, texts: string[]) => {
+    try {
+      const r = await api.addMistakes(groupId, texts);
+      setAddOpen(false);
+      await reload(filter);
+      setGroups(await api.listGroups());
+      notify(
+        "ok",
+        `已加入 ${r.added} 个词` +
+          (r.skippedExisting > 0 ? `，${r.skippedExisting} 个已在错题本跳过` : ""),
+      );
+    } catch (e) {
+      notify("error", errorMessage(e));
+    }
+  };
+
   const master = async (word: Mistake) => {
     try {
       await api.setWordMastered(word.id, true);
@@ -337,6 +353,7 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
           groups={groups}
           defaultGroupId={filter}
           onSubmit={addMistake}
+          onSubmitBatch={addMistakeBatch}
           onClose={() => setAddOpen(false)}
         />
       )}
