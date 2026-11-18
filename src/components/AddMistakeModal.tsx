@@ -183,12 +183,12 @@ export default function AddMistakeModal({
                 className="w-full rounded-md border border-stone-200 px-3 py-2 text-sm outline-none focus:border-stone-400"
               />
             </label>
-            {glyphs.length > 0 && (
-              <div>
-                <span className="mb-1.5 block text-xs font-medium text-stone-500">
-                  不会写的字（可不点）
-                </span>
-                <div className="flex flex-wrap gap-1.5">
+            <div>
+              <span className="mb-1.5 block text-xs font-medium text-stone-500">
+                不会写的字（可不点）
+              </span>
+              {glyphs.length > 0 ? (
+                <div className="flex min-h-[1.875rem] flex-wrap gap-1.5">
                   {glyphs.map((ch, i) => (
                     <button
                       key={i}
@@ -204,8 +204,13 @@ export default function AddMistakeModal({
                     </button>
                   ))}
                 </div>
-              </div>
-            )}
+              ) : (
+                // 占位与一行 chips 等高：输入第一个字时区块不跳高度
+                <p className="min-h-[1.875rem] py-1 text-xs leading-5 text-stone-300">
+                  输入词语后，在这里点选不会写的字
+                </p>
+              )}
+            </div>
           </>
         ) : (
           <>
@@ -222,14 +227,17 @@ export default function AddMistakeModal({
                 className="w-full resize-none rounded-md border border-stone-200 px-3 py-2 text-sm outline-none focus:border-stone-400"
               />
             </label>
-            {preview && (
-              <div>
-                <span className="mb-1.5 block text-xs font-medium text-stone-500">
-                  共 {batchCount} 个词
-                  {preview.duplicates > 0 ? `，输入里重复 ${preview.duplicates} 个已去重` : ""}
-                  {preview.dropped > 0 ? `，无效 ${preview.dropped} 条已过滤` : ""}
-                </span>
-                <div className="max-h-32 overflow-y-auto rounded-md border border-stone-100 bg-stone-50/60 px-3 py-2">
+            <div>
+              <span className="mb-1.5 block text-xs font-medium text-stone-500">
+                {preview
+                  ? `共 ${batchCount} 个词` +
+                    (preview.duplicates > 0 ? `，输入里重复 ${preview.duplicates} 个已去重` : "") +
+                    (preview.dropped > 0 ? `，无效 ${preview.dropped} 条已过滤` : "")
+                  : "切分预览"}
+              </span>
+              {/* 容器常驻 + 固定最小高度：预览出现/消失时弹窗高度不跳 */}
+              <div className="max-h-32 min-h-[3rem] overflow-y-auto rounded-md border border-stone-100 bg-stone-50/60 px-3 py-2">
+                {preview && preview.words.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
                     {preview.words.map((w, i) => (
                       <span
@@ -240,12 +248,16 @@ export default function AddMistakeModal({
                       </span>
                     ))}
                   </div>
-                </div>
-                <p className="mt-1.5 text-xs text-stone-400">
-                  已在错题本里的词加入时会自动跳过；需要标「不会写的字」的词，加入后点「编辑」补
-                </p>
+                ) : (
+                  <p className="py-1.5 text-xs leading-5 text-stone-300">
+                    {preview ? "没有切分出可加入的词" : "粘贴或输入后，这里显示切分出的词语"}
+                  </p>
+                )}
               </div>
-            )}
+              <p className="mt-1.5 text-xs text-stone-400">
+                已在错题本里的词加入时会自动跳过；需要标「不会写的字」的词，加入后点「编辑」补
+              </p>
+            </div>
           </>
         )}
       </div>

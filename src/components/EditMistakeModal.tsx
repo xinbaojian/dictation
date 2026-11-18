@@ -77,10 +77,10 @@ export default function EditMistakeModal({ word, onSubmit, onClose }: EditMistak
             className="w-full rounded-md border border-stone-200 px-3 py-2 text-sm outline-none focus:border-stone-400"
           />
         </label>
-        {glyphs.length > 0 && (
-          <div>
-            <span className="mb-1.5 block text-xs font-medium text-stone-500">不会写的字（可不点）</span>
-            <div className="flex flex-wrap gap-1.5">
+        <div>
+          <span className="mb-1.5 block text-xs font-medium text-stone-500">不会写的字（可不点）</span>
+          {glyphs.length > 0 ? (
+            <div className="flex min-h-[1.875rem] flex-wrap gap-1.5">
               {glyphs.map((ch, i) => (
                 <button
                   key={i}
@@ -96,8 +96,13 @@ export default function EditMistakeModal({ word, onSubmit, onClose }: EditMistak
                 </button>
               ))}
             </div>
-          </div>
-        )}
+          ) : (
+            // 占位与一行 chips 等高：清空/输入词语时区块不跳高度
+            <p className="min-h-[1.875rem] py-1 text-xs leading-5 text-stone-300">
+              输入词语后，在这里点选不会写的字
+            </p>
+          )}
+        </div>
       </div>
     </Modal>
   );
