@@ -1,7 +1,7 @@
 {
   "name": "dictation",
   "private": true,
-  "version": "0.9.2",
+  "version": "0.9.3",
   "type": "module",
   "scripts": {
     "predev": "node scripts/sync-hanzi-data.mjs && node scripts/sync-dict-data.mjs",
