@@ -19,6 +19,18 @@ pub enum Op {
     Sub,
 }
 
+impl Op {
+    /// 与序列化约定一致的单字符（库里 `math_items.op1/op2` 存的就是它）
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Op::Mul => "m",
+            Op::Div => "d",
+            Op::Add => "a",
+            Op::Sub => "s",
+        }
+    }
+}
+
 /// 留空位置选择
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlankSel {
@@ -130,7 +142,19 @@ pub struct MathQuestion {
     pub d: i32,
 }
 
-/// 一张卷：30 题与每题留空位置（1-4）
+/// 留空位置对应的正确答案（`nums` 按 ① ② ③ ④ 传）。出卷时就已确定（引擎保证该位置唯一解），
+/// 判题只需整数比较，不必重新求值。pos 越界按 4 处理（与 blanks 的取值范围一致）。
+/// 判题（`repo::math_sessions`）和测试共用这一处，别在别处再写一遍 match。
+pub fn value_at(nums: [i32; 4], pos: u8) -> i32 {
+    match pos {
+        1 => nums[0],
+        2 => nums[1],
+        3 => nums[2],
+        _ => nums[3],
+    }
+}
+
+/// 一张卷：题目与每题留空位置（1-4），题量由 questions.len() 决定（默认 30）
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MathSheet {
     pub questions: Vec<MathQuestion>,
@@ -338,9 +362,15 @@ fn unique_all(q: &MathQuestion, ranges: &MathRanges) -> bool {
     (1..=4u8).all(|p| unique_at(q, p, ranges))
 }
 
-/// 组卷：符号按配额打乱、题目去重、相邻题 b/d 错开；失败返回 None
-fn build(seed: u32, combos: &[(Op, Op)], ranges: &MathRanges) -> Option<Vec<MathQuestion>> {
-    let mut plan: Vec<(Op, Op)> = (0..30).map(|i| combos[i % combos.len()]).collect();
+/// 组卷：符号按配额打乱、题目去重、相邻题 b/d 错开；失败返回 None。
+/// count 为题量：分段配额按 `i * stages / count` 摊开，所以 10 题也覆盖三段难度。
+fn build(
+    seed: u32,
+    combos: &[(Op, Op)],
+    ranges: &MathRanges,
+    count: usize,
+) -> Option<Vec<MathQuestion>> {
+    let mut plan: Vec<(Op, Op)> = (0..count).map(|i| combos[i % combos.len()]).collect();
     shuffle(&mut plan, &mut Rng::new(seed ^ 0x9E3779B9));
 
     // 预计算每个组合的候选池（默认 3 段 / 自定义 1 段），避免 1500 次重试里反复枚举
@@ -353,9 +383,10 @@ fn build(seed: u32, combos: &[(Op, Op)], ranges: &MathRanges) -> Option<Vec<Math
     let mut qs: Vec<MathQuestion> = Vec::new();
     let mut seen: HashSet<(i32, i32, i32, Op, Op, i32)> = HashSet::new();
     for (i, &cb) in plan.iter().enumerate() {
-        // 段索引按比例：3 段时 i/10（前 10 题第 1 段…），1 段时恒 0
+        // 段索引按比例：30 题 / 3 段时 i/10（前 10 题第 1 段…），1 段时恒 0；
+        // 题量变小时仍按同一比例摊开，10 题也能覆盖三段难度
         let sp = &pools[&cb];
-        let s = i * sp.stages.len() / 30;
+        let s = i * sp.stages.len() / count;
         let p = &sp.stages[s];
         let ap = &sp.all;
         let mut got: Option<MathQuestion> = None;
@@ -411,10 +442,15 @@ fn score(qs: &[MathQuestion]) -> f64 {
 }
 
 /// 24 个相邻 seed 各出一卷，取分布最好的；全部失败返回 None
-fn build_best(seed: u32, combos: &[(Op, Op)], ranges: &MathRanges) -> Option<Vec<MathQuestion>> {
+fn build_best(
+    seed: u32,
+    combos: &[(Op, Op)],
+    ranges: &MathRanges,
+    count: usize,
+) -> Option<Vec<MathQuestion>> {
     let mut best: Option<(f64, Vec<MathQuestion>)> = None;
     for k in 0..24u32 {
-        if let Some(qs) = build(seed.wrapping_add(k), combos, ranges) {
+        if let Some(qs) = build(seed.wrapping_add(k), combos, ranges, count) {
             let sc = score(&qs);
             if best.as_ref().is_none_or(|b| sc > b.0) {
                 best = Some((sc, qs));
@@ -424,32 +460,43 @@ fn build_best(seed: u32, combos: &[(Op, Op)], ranges: &MathRanges) -> Option<Vec
     best.map(|(_, qs)| qs)
 }
 
-/// 出题。返回 None 表示当前符号组合无解（前端提示换运算符）。
+/// 默认题量：纸质卷一直是 30 题，保持原行为
+pub const DEFAULT_COUNT: usize = 30;
+/// 题量上下限（家长界面只给 10/15/20/30，这里只是兜底）
+pub const COUNT_MIN: usize = 5;
+pub const COUNT_MAX: usize = 50;
+
+/// 出题。返回 None 表示当前符号组合无解（前端提示换运算符），或题量越界。
 /// ranges 为默认值时走三段难度；自定义区间用单池平铺（不再分段）。
-pub fn generate(
+/// count = 30 时与加题量参数之前的输出逐题一致（同一 seed 同一张卷，测试钉住）。
+pub fn generate_count(
     seed: u32,
     pos: BlankSel,
     op1: Op1Sel,
     op2: Op2Sel,
     ranges: &MathRanges,
+    count: usize,
 ) -> Option<MathSheet> {
+    if !(COUNT_MIN..=COUNT_MAX).contains(&count) {
+        return None;
+    }
     let combos = combos_for(op1, op2, ranges);
     // 与 JS 出题器一致：无可用符号组合时不出卷，而不是 panic
     if combos.is_empty() {
         return None;
     }
-    let questions = build_best(seed, &combos, ranges)?;
+    let questions = build_best(seed, &combos, ranges, count)?;
     // 留空位置与题目无关（同 seed 换位置不换题）；随机模式四位置配额打乱
     let blanks = match pos {
         BlankSel::Random => {
-            let mut arr: Vec<u8> = (0..30).map(|i| (i % 4 + 1) as u8).collect();
+            let mut arr: Vec<u8> = (0..count).map(|i| (i % 4 + 1) as u8).collect();
             shuffle(&mut arr, &mut Rng::new(seed ^ 0x5BF03635));
             arr
         }
-        BlankSel::One => vec![1; 30],
-        BlankSel::Two => vec![2; 30],
-        BlankSel::Three => vec![3; 30],
-        BlankSel::Four => vec![4; 30],
+        BlankSel::One => vec![1; count],
+        BlankSel::Two => vec![2; count],
+        BlankSel::Three => vec![3; count],
+        BlankSel::Four => vec![4; count],
     };
     Some(MathSheet { questions, blanks })
 }
@@ -460,8 +507,19 @@ mod tests {
 
     const SEED: u32 = 20261105;
 
+    /// 默认 30 题的卷（生产侧一律走 `generate_count`，这里只是省掉每个用例写题量）
+    fn gen(
+        seed: u32,
+        pos: BlankSel,
+        op1: Op1Sel,
+        op2: Op2Sel,
+        ranges: &MathRanges,
+    ) -> Option<MathSheet> {
+        generate_count(seed, pos, op1, op2, ranges, DEFAULT_COUNT)
+    }
+
     fn sheet(pos: BlankSel, op1: Op1Sel, op2: Op2Sel) -> MathSheet {
-        generate(SEED, pos, op1, op2, &MathRanges::default()).expect("默认组合应能出满 30 题")
+        gen(SEED, pos, op1, op2, &MathRanges::default()).expect("默认组合应能出满 30 题")
     }
 
     /// 测试内独立重算：留空位置 p 在指定值域内有几个解（不复用实现里的唯一解校验）
@@ -579,7 +637,7 @@ mod tests {
     #[test]
     fn div_then_sub_is_unsolvable() {
         assert!(
-            generate(
+            gen(
                 SEED,
                 BlankSel::Two,
                 Op1Sel::Fixed(Op::Div),
@@ -589,7 +647,7 @@ mod tests {
             .is_none()
         );
         assert!(
-            generate(
+            gen(
                 SEED,
                 BlankSel::Two,
                 Op1Sel::Fixed(Op::Sub),
@@ -630,11 +688,103 @@ mod tests {
     }
 
     #[test]
+    fn count_controls_question_number_and_keeps_unique_solutions() {
+        for count in [5usize, 10, 15, 20, 25, 50] {
+            let s = generate_count(
+                SEED,
+                BlankSel::Random,
+                Op1Sel::Fixed(Op::Mul),
+                Op2Sel::Random,
+                &MathRanges::default(),
+                count,
+            )
+            .unwrap_or_else(|| panic!("{count} 题应能出卷"));
+            assert_eq!(s.questions.len(), count);
+            assert_eq!(s.blanks.len(), count);
+            let keys: HashSet<_> = s
+                .questions
+                .iter()
+                .map(|q| (q.a, q.b, q.c, q.op1, q.op2, q.d))
+                .collect();
+            assert_eq!(keys.len(), count, "{count} 题卷里不应有重复题");
+            for q in &s.questions {
+                for p in 1..=4u8 {
+                    assert_eq!(
+                        solution_count(q, p, MathRanges::default()),
+                        1,
+                        "{:?} 在位置 {} 不是唯一解",
+                        q,
+                        p
+                    );
+                }
+            }
+        }
+    }
+
+    /// 卷面指纹（FNV-1a 64）：只用来「钉住」输出，不当安全哈希用
+    fn fingerprint(s: &MathSheet) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut push = |v: u64| {
+            h ^= v;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        };
+        for (q, &blank) in s.questions.iter().zip(s.blanks.iter()) {
+            for v in [q.a, q.b, q.c, q.d, q.t] {
+                push(v as u64);
+            }
+            push(q.op1 as u64);
+            push(q.op2 as u64);
+            push(blank as u64);
+        }
+        h
+    }
+
+    /// 30 题是打印用的老卷面：同一 seed 的题面一变，家长重新打印就对不上手里的旧卷。
+    /// 这个指纹是「改出题逻辑必须显式更新」的闸门——更新它等于确认旧卷作废。
+    #[test]
+    fn default_thirty_sheet_fingerprint_is_pinned() {
+        let s = sheet(BlankSel::Two, Op1Sel::Fixed(Op::Mul), Op2Sel::Random);
+        assert_eq!(
+            fingerprint(&s),
+            757_271_075_614_209_794,
+            "30 题卷面变了：确认是有意改出题逻辑后，再把这里更新成新指纹"
+        );
+    }
+
+    #[test]
+    fn count_out_of_range_is_rejected() {
+        let r = MathRanges::default();
+        for bad in [0usize, 4, 51] {
+            assert!(
+                generate_count(SEED, BlankSel::Two, Op1Sel::Fixed(Op::Mul), Op2Sel::Random, &r, bad)
+                    .is_none(),
+                "{bad} 题不该出卷"
+            );
+        }
+    }
+
+    #[test]
+    fn small_count_still_covers_harder_stage() {
+        // 10 题按 3:3:4 摊到三段，末尾几题应落在第 3 段（a ≥ 5），不该全是最简单的
+        let s = generate_count(
+            SEED,
+            BlankSel::Two,
+            Op1Sel::Fixed(Op::Mul),
+            Op2Sel::Random,
+            &MathRanges::default(),
+            10,
+        )
+        .expect("10 题应能出卷");
+        let hard = s.questions.iter().filter(|q| q.a >= 5).count();
+        assert!(hard >= 2, "10 题里应至少 2 题落在第 3 段，实际 {hard}");
+    }
+
+    #[test]
     fn different_seed_different_sheet() {
         // build_best 各扫 24 个相邻 seed 取最优，相邻 seed 的窗口高度重叠、
         // 常会选中同一张卷（设计内行为）；相隔 1000 窗口不相交，卷必然不同
         let s1 = sheet(BlankSel::Two, Op1Sel::Fixed(Op::Mul), Op2Sel::Random);
-        let s2 = generate(
+        let s2 = gen(
             SEED + 1000,
             BlankSel::Two,
             Op1Sel::Fixed(Op::Mul),
@@ -655,7 +805,7 @@ mod tests {
             c_max: 100,
             ..Default::default()
         };
-        let s = generate(SEED, BlankSel::Two, Op1Sel::Fixed(Op::Mul), Op2Sel::Random, &ranges)
+        let s = gen(SEED, BlankSel::Two, Op1Sel::Fixed(Op::Mul), Op2Sel::Random, &ranges)
             .expect("自定义区间应能出卷");
         assert_eq!(s.questions.len(), 30);
         for q in &s.questions {
@@ -675,7 +825,7 @@ mod tests {
             d_max: 100,
             ..Default::default()
         };
-        let s = generate(SEED, BlankSel::Random, Op1Sel::Random, Op2Sel::Random, &ranges)
+        let s = gen(SEED, BlankSel::Random, Op1Sel::Random, Op2Sel::Random, &ranges)
             .expect("自定义得数区间应能出卷");
         for q in &s.questions {
             assert!((50..=100).contains(&q.d));
@@ -694,8 +844,8 @@ mod tests {
             c_max: 60,
             ..Default::default()
         };
-        let s1 = generate(SEED, BlankSel::One, Op1Sel::Random, Op2Sel::Add, &ranges).unwrap();
-        let s2 = generate(SEED, BlankSel::One, Op1Sel::Random, Op2Sel::Add, &ranges).unwrap();
+        let s1 = gen(SEED, BlankSel::One, Op1Sel::Random, Op2Sel::Add, &ranges).unwrap();
+        let s2 = gen(SEED, BlankSel::One, Op1Sel::Random, Op2Sel::Add, &ranges).unwrap();
         assert_eq!(s1, s2);
     }
 

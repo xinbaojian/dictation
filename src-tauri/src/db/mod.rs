@@ -12,6 +12,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (5, include_str!("../../migrations/0005_word_wrong_chars.sql")),
     (6, include_str!("../../migrations/0006_ai_cards.sql")),
     (7, include_str!("../../migrations/0007_char_cards.sql")),
+    (8, include_str!("../../migrations/0008_math_practice.sql")),
 ];
 
 /// 当前程序认识的最大 user_version；导入同步快照时用来自拒来自更新版本的数据。

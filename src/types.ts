@@ -314,6 +314,84 @@ export interface MathSheet {
   blanks: number[];
 }
 
+/** 上机做题时的一道题（后端 math_items 视图）：题目是开卷时的快照 */
+export interface MathItem {
+  /** 0 起 */
+  seq: number;
+  a: number;
+  b: number;
+  c: number;
+  /** 第一步中间结果 a op1 b */
+  t: number;
+  /** 得数 */
+  d: number;
+  op1: "m" | "d" | "a" | "s";
+  op2: "m" | "d" | "a" | "s";
+  /** 留空位置 1-4 */
+  blankPos: number;
+  /** null = 没做；"" = 跳过了（记错） */
+  input: string | null;
+  /** null = 未判；做题过程中后端不回传，交卷后才有 */
+  correct: boolean | null;
+  elapsedMs: number | null;
+}
+
+/** 一次上机做题（math_sessions + math_items） */
+export interface MathPractice {
+  id: number;
+  seed: number;
+  total: number;
+  status: "running" | "finished" | "abandoned";
+  startedAt: string;
+  finishedAt: string | null;
+  correctTotal: number | null;
+  durationMs: number | null;
+  items: MathItem[];
+}
+
+/** 交一题的回执：只回进度，不回对错（全场结束后统一公布） */
+export interface MathAnswerAck {
+  answered: number;
+  total: number;
+}
+
+/** 交卷后的成绩单 */
+export interface MathResult {
+  id: number;
+  total: number;
+  correctTotal: number;
+  durationMs: number;
+  /** 错题题号（1 起，含未答） */
+  wrongSeqs: number[];
+  /** 本题量的历史「全对最快」用时（含本次）；没全对过为 null */
+  bestMs: number | null;
+  /** 本次是否刷新了最快纪录 */
+  newBest: boolean;
+  items: MathItem[];
+}
+
+/** 记录页一行（摘要，不带题目） */
+export interface MathSummary {
+  id: number;
+  seed: number;
+  total: number;
+  answered: number;
+  correctTotal: number | null;
+  durationMs: number | null;
+  status: "running" | "finished" | "abandoned";
+  startedAt: string;
+  finishedAt: string | null;
+  /** 同为该题量的全对最快（并列也算） */
+  isBest: boolean;
+}
+
+/** 各题量的全对最快纪录 */
+export interface MathBest {
+  total: number;
+  bestMs: number;
+  achievedAt: string;
+}
+
 /** 口算四位置的取值区间；字段名与后端 camelCase 对应（aMin/aMax…）。
  *  全部为默认值（1-9 / 1-9 / 10-50 / 1-100）时走三段难度；自定义则单池平铺。 */
 export interface MathRanges {

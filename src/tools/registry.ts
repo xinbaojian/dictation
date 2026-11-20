@@ -17,6 +17,12 @@ export type Route =
   | { name: "dictation"; page: "print"; mode: "mistakes" | "group"; groupId: number | null; title: string }
   // ── 口算练习 ──
   | { name: "math"; page: "sheet" }
+  /** 上机做题：题目已落库，页面只按 sessionId 取（断点续做也走这条）。
+   *  from 只决定「返回」回哪：出题页开的卷回出题页，记录页点开的回记录页。 */
+  | { name: "math"; page: "practice"; sessionId: number; from?: "sheet" | "history" }
+  /** 做题记录。page 名必须全局唯一（App 拿它当 routeKey），所以不能叫 history——
+   *  那是默写记录的 page 名 */
+  | { name: "math"; page: "records" }
   // ── 查字 ──
   | { name: "lookup"; page: "lookup" }
   // ── 全局 ──
@@ -53,6 +59,9 @@ export const NAV_BY_TOOL: Record<ToolId, readonly NavItem[]> = {
     { key: "mistakes", label: "错题", route: { name: "dictation", page: "mistakes" } },
     { key: "history", label: "记录", route: { name: "dictation", page: "history" } },
   ],
-  math: [{ key: "sheet", label: "出题", route: { name: "math", page: "sheet" } }],
+  math: [
+    { key: "sheet", label: "出题", route: { name: "math", page: "sheet" } },
+    { key: "records", label: "记录", route: { name: "math", page: "records" } },
+  ],
   lookup: [{ key: "lookup", label: "查字", route: { name: "lookup", page: "lookup" } }],
 };

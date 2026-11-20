@@ -1,8 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import ConfirmModal from "../../components/ConfirmModal";
 import { Toast, useNotice } from "../../components/Toast";
 import { api, errorMessage } from "../../lib/ipc";
 import { printWithToast } from "../../lib/print";
-import { DEFAULT_MATH_RANGES, type MathRanges, type MathSheet } from "../../types";
+import {
+  DEFAULT_MATH_RANGES,
+  type MathPractice,
+  type MathRanges,
+  type MathSheet,
+} from "../../types";
 import { buildExample, type MathOp } from "./example";
 import "./math-sheet.css";
 
@@ -12,6 +18,8 @@ interface MathOptions {
   op1: string; // "m" | "d" | "a" | "s" | "random"
   op2: string; // "a" | "s" | "random"
   showAns: boolean;
+  /** 题量：打印与上机做题共用（同一张卷） */
+  count: number;
   ranges: MathRanges;
 }
 
@@ -20,8 +28,11 @@ const DEFAULT_OPTIONS: MathOptions = {
   op1: "m",
   op2: "random",
   showAns: false,
+  count: 30,
   ranges: DEFAULT_MATH_RANGES,
 };
+/** 家长能选的题量（后端允许 5-50，这里只给 5 的倍数到 30） */
+const COUNT_OPTIONS = [5, 10, 15, 20, 25, 30];
 const STORAGE_KEY = "mathSheet.options";
 
 function loadOptions(): MathOptions {
@@ -32,7 +43,8 @@ function loadOptions(): MathOptions {
       return {
         ...DEFAULT_OPTIONS,
         ...saved,
-        // 区间单独合并，旧版本存的数据没有 ranges 也能落回默认
+        // 旧版本存的数据没有 count / ranges 也能落回默认
+        count: COUNT_OPTIONS.includes(Number(saved.count)) ? Number(saved.count) : 30,
         ranges: { ...DEFAULT_MATH_RANGES, ...(saved.ranges ?? {}) },
       };
     }
@@ -80,13 +92,25 @@ const sameRange = (a: MathRanges, b: MathRanges) =>
 /** 每次访问换一套新题；>>> 0 保证落在 u32 范围内与后端 seed 对齐 */
 const newSeed = () => (Date.now() ^ Math.floor(Math.random() * 2147483647)) >>> 0;
 
-export default function MathSheetPage() {
+export default function MathSheetPage({
+  onStartPractice,
+}: {
+  /** 卷子已落库，交给做题页按 sessionId 取（同 seed 出卷 ⇒ 与打印的纸质卷逐题一致） */
+  onStartPractice: (sessionId: number) => void;
+}) {
   const [options, setOptions] = useState<MathOptions>(loadOptions);
   const [seed, setSeed] = useState(newSeed);
   const [sheet, setSheet] = useState<MathSheet | null>(null);
   const [loading, setLoading] = useState(true);
   /** 区间输入的本地草稿：清空/负号等中间态先落在这里，合法才写回 options，失焦丢弃 */
   const [drafts, setDrafts] = useState<Partial<Record<keyof MathRanges, string>>>({});
+  /** 上次没做完的卷：点「开始做题」时先问一句，别让孩子不明不白从头再来 */
+  const [running, setRunning] = useState<MathPractice | null>(null);
+  /** 进页面就看到的「上次还没交卷」提示条：本页显示的是新卷，要说清它不是那张 */
+  const [prevRunning, setPrevRunning] = useState<MathPractice | null>(null);
+  const [starting, setStarting] = useState(false);
+  /** 同步锁，防连点开出两张卷（state 是异步的） */
+  const startingRef = useRef(false);
   const { notice, notify } = useNotice();
 
   // 第一步为 ÷/− 时中间结果很小，减不动 ≥10 的第三数：第二步强制用加（与原 normalize 一致）
@@ -105,6 +129,22 @@ export default function MathSheetPage() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(options));
   }, [options]);
 
+  // 进页面看一眼有没有没交卷的卷：本页是新卷，得让孩子知道「上次那张」还在
+  useEffect(() => {
+    let alive = true;
+    api
+      .latestRunningMath()
+      .then((p) => {
+        if (alive) setPrevRunning(p);
+      })
+      .catch(() => {
+        // 读不到不影响出题
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   useEffect(() => {
     // 区间逐键输入会连发 IPC，120ms 防抖合并（与抽题页可抽数量一致）
     let alive = true;
@@ -112,7 +152,14 @@ export default function MathSheetPage() {
       setLoading(true);
       (async () => {
         try {
-          const s = await api.generateMathSheet(seed, eff.pos, eff.op1, eff.op2, options.ranges);
+          const s = await api.generateMathSheet(
+            seed,
+            eff.pos,
+            eff.op1,
+            eff.op2,
+            options.ranges,
+            options.count,
+          );
           if (alive) setSheet(s);
         } catch (e) {
           if (alive) {
@@ -130,7 +177,7 @@ export default function MathSheetPage() {
     };
     // eff 由下方三个原始值派生，只依赖原始值即可
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seed, options.pos, options.op1, options.op2, options.ranges]);
+  }, [seed, options.pos, options.op1, options.op2, options.ranges, options.count]);
 
   /** 区间输入：中间态进 draft，空串/非整数不写回（后端 validate 兜底报中文错误） */
   const setRange = (key: keyof MathRanges, raw: string) => {
@@ -150,6 +197,52 @@ export default function MathSheetPage() {
   };
   const rangeValue = (key: keyof MathRanges) => drafts[key] ?? String(options.ranges[key]);
 
+  /** 用当前这张卷（同 seed、同条件）开一局上机做题 */
+  const beginPractice = async () => {
+    // 用 ref 做同步锁：state 更新是异步的，连点两下会开出两张卷（其中一张再也没人看见）
+    if (startingRef.current) return;
+    startingRef.current = true;
+    setStarting(true);
+    try {
+      const p = await api.startMathSession(
+        seed,
+        eff.pos,
+        eff.op1,
+        eff.op2,
+        options.ranges,
+        options.count,
+      );
+      onStartPractice(p.id);
+    } catch (e) {
+      notify("error", errorMessage(e));
+    } finally {
+      startingRef.current = false;
+      setStarting(false);
+    }
+  };
+
+  /** 先看有没有没做完的卷：有就问「继续上次还是换新卷」，没有直接开 */
+  const startPractice = async () => {
+    if (startingRef.current) return;
+    try {
+      const prev = await api.latestRunningMath();
+      if (prev) {
+        setRunning(prev);
+        return;
+      }
+    } catch {
+      // 查不到就照常开新卷，不挡路
+    }
+    await beginPractice();
+  };
+
+  const resumeAnswered = running?.items.filter((it) => it.input !== null).length ?? 0;
+  const resumeNext = (() => {
+    if (!running) return 0;
+    const i = running.items.findIndex((it) => it.input === null);
+    return i === -1 ? running.total : i + 1;
+  })();
+
   const first = sheet?.questions[0];
   const example = first
     ? buildExample(
@@ -162,6 +255,28 @@ export default function MathSheetPage() {
   return (
     <div className="flex min-h-0 flex-1">
       <aside className="no-print flex w-[248px] shrink-0 flex-col gap-4 overflow-y-auto border-r border-stone-200 bg-white p-3.5 text-[12.5px] text-stone-500">
+        <div className="flex flex-col gap-1.5">
+          <span className="ms-sec-title">做几道题</span>
+          <div className="grid grid-cols-3 gap-1.5">
+            {COUNT_OPTIONS.map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setOptions((o) => ({ ...o, count: n }))}
+                className={
+                  "rounded-md border py-1 text-[12px] tabular-nums transition " +
+                  (options.count === n
+                    ? "border-amber-500 bg-amber-50 font-medium text-amber-800"
+                    : "border-stone-200 text-stone-500 hover:bg-stone-50")
+                }
+              >
+                {n} 道
+              </button>
+            ))}
+          </div>
+          <p className="ms-note">打印和上机做题是同一张卷。</p>
+        </div>
+
         <div className="flex flex-col gap-1">
           <span className="ms-sec-title">让第几个数留空</span>
           {POS_OPTIONS.map((it) => (
@@ -241,7 +356,7 @@ export default function MathSheetPage() {
             {customRange ? (
               <>
                 自定义区间：整卷同一区间出题，<em>不再分三段难度</em>；两端相同（固定单值）时可能出不出
-                30 题。①② 上限 20、③ 上限 100、④ 上限 200。
+                {options.count} 题。①② 上限 20、③ 上限 100、④ 上限 200。
               </>
             ) : (
               <>默认区间分三段难度递进（易 → 难）。①② 上限 20、③ 上限 100、④ 上限 200。</>
@@ -259,18 +374,27 @@ export default function MathSheetPage() {
             {options.showAns ? "隐藏答案 · 给孩子" : "显示答案 · 家长版"}
           </button>
           <button
+            className="ms-btn w-full"
+            type="button"
+            disabled={starting || loading || !sheet}
+            onClick={() => void startPractice()}
+          >
+            {starting ? "正在准备…" : `在电脑上做这 ${options.count} 道`}
+          </button>
+          <button
             className="ms-btn ms-btn-alt w-full"
+            type="button"
+            disabled={loading || !sheet}
+            onClick={() => printWithToast(".ms-sheet", `口算练习-题号${seed}`, notify)}
+          >
+            打印 / 存为 PDF
+          </button>
+          <button
+            className="ms-btn ms-btn-ghost w-full"
             type="button"
             onClick={() => setSeed(newSeed())}
           >
             重新生成算式
-          </button>
-          <button
-            className="ms-btn w-full"
-            type="button"
-            onClick={() => printWithToast(".ms-sheet", `口算练习-题号${seed}`, notify)}
-          >
-            打印 / 存为 PDF
           </button>
         </div>
 
@@ -285,6 +409,21 @@ export default function MathSheetPage() {
         <style>{"@page { size: A4 portrait; margin: 0 }"}</style>
 
         <div className="ms-stack">
+          {prevRunning && (
+            <div className="no-print mb-3 flex w-[210mm] max-w-full items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">
+              <span className="font-medium">上次那张卷还没交卷</span>
+              <span className="text-amber-700">
+                已答 {prevRunning.items.filter((it) => it.input !== null).length} / {prevRunning.total} 题
+                （下面这张是新卷）
+              </span>
+              <button
+                className="ml-auto shrink-0 rounded bg-amber-600 px-2.5 py-1 text-white hover:bg-amber-700"
+                onClick={() => onStartPractice(prevRunning.id)}
+              >
+                继续上次
+              </button>
+            </div>
+          )}
           <p className="ms-cap no-print">
             二年级口算 · {posLabel(options.pos)} · {eff.op1 === "random" ? "混合" : OP_SYM[eff.op1]} →{" "}
             {eff.op2 === "random" ? "±" : OP_SYM[eff.op2]} · 题目 #{seed} ·{" "}
@@ -299,7 +438,7 @@ export default function MathSheetPage() {
             </div>
           ) : !sheet ? (
             <div className="flex w-[210mm] max-w-full flex-col items-center gap-2 rounded bg-white px-6 py-20 shadow-md">
-              <p className="text-sm text-stone-500">这组条件暂时出不出 30 道题</p>
+              <p className="text-sm text-stone-500">这组条件暂时出不出 {options.count} 道题</p>
               <p className="text-xs text-stone-400">
                 请换一个运算符、放宽取值区间，或把第一步改成「随机」
               </p>
@@ -333,7 +472,7 @@ export default function MathSheetPage() {
                   </span>
                   <span>
                     做对<span className="ms-fill w-s" />
-                    / 30 题
+                    / {sheet?.questions.length ?? options.count} 题
                   </span>
                 </div>
               </div>
@@ -406,6 +545,36 @@ export default function MathSheetPage() {
             </div>
           )}
         </div>
+
+        {running && (
+          <ConfirmModal
+            title="上次的口算还没交卷"
+            body={
+              resumeAnswered >= running.total
+                ? `${running.total} 题都答完了，只是还没交卷。继续去交卷，还是换现在这张新卷？`
+                : `上次那张卷做到第 ${resumeNext} 题（共 ${running.total} 题，已答 ${resumeAnswered} 题）。接着上次做，还是换现在这张新卷？`
+            }
+            confirmText="继续上次"
+            cancelText="取消"
+            extraText="换成这张新卷"
+            onExtra={async () => {
+              try {
+                await api.abandonMathSession(running.id);
+                setPrevRunning(null);
+                setRunning(null);
+                await beginPractice();
+              } catch (e) {
+                notify("error", errorMessage(e));
+              }
+            }}
+            onCancel={() => setRunning(null)}
+            onConfirm={() => {
+              const id = running.id;
+              setRunning(null);
+              onStartPractice(id);
+            }}
+          />
+        )}
 
         <Toast notice={notice} />
       </div>

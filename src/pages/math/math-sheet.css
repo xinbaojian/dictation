@@ -223,10 +223,11 @@
 /* 30 题：3 列 × 10 行，每格 62×20mm */
 .ms-grid {
   margin-top: 4mm;
-  height: 200mm;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(10, 20mm);
+  /* 行高固定、行数随题量走：30 题正好 10 行（与原来的 200mm 一致），
+     选 10 题也不会留一大片空格子 */
+  grid-auto-rows: 20mm;
   border-top: 1px solid #e2dccd;
   border-left: 1px solid #e2dccd;
 }

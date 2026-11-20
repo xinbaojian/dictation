@@ -29,7 +29,18 @@ const META_KEY: &str = "meta";
 /// 快照本身仍然把 settings 表一起带走，只是它不参与差异判定。
 /// `ai_cards`（迁移 0006 的讲解卡缓存）与 `char_cards`（0007 的查字字卡缓存）必须在这里：
 /// 只生成/重新生成了卡片、词没变时，内容哈希也要变，否则推送会被判成「内容没变」而跳过。
-const TABLES: [&str; 6] = ["groups", "words", "sessions", "session_items", "ai_cards", "char_cards"];
+/// `math_sessions` / `math_items`（0008 的口算上机做题记录）同理必须在这里：
+/// 只做了一张口算卷、词没变时内容也算变了，否则推进会被跳过。
+const TABLES: [&str; 8] = [
+    "groups",
+    "words",
+    "sessions",
+    "session_items",
+    "ai_cards",
+    "char_cards",
+    "math_sessions",
+    "math_items",
+];
 
 fn unix_secs() -> u64 {
     SystemTime::now()
@@ -322,10 +333,14 @@ fn hash_table(hasher: &mut Sha256, conn: &Connection, table: &str) -> AppResult<
     Ok(())
 }
 
-/// 本机是否连一条词都没有：决定「从没同步过的新机器」拉取时要不要弹覆盖确认。
-/// 只看业务数据，不看 settings：字号被改过不等于用户录过词。
+/// 判定「空库」只看词库与默写数据：`ai_cards` / `char_cards` / `math_*` 这类缓存与做题记录
+/// 不该让一台还没录过词的机器看起来像「有内容」。这一条同时决定两件危险的事：
+/// 1. 空库强推要先 archive 云端快照——误判成非空就会无存档地覆盖云端（另一台机器的词就没了）；
+/// 2. 新装第二台首次拉取要不要弹「覆盖本机」——误判成非空会平白吓家长一跳。
+const EMPTY_CHECK_TABLES: [&str; 4] = ["groups", "words", "sessions", "session_items"];
+
 fn library_is_empty(conn: &Connection) -> AppResult<bool> {
-    for table in TABLES {
+    for table in EMPTY_CHECK_TABLES {
         let n: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))?;
         if n > 0 {
             return Ok(false);
@@ -1823,7 +1838,9 @@ mod tests {
     use super::*;
     use crate::db;
     use crate::domain::char_card::CharCardContent;
+    use crate::domain::math::{MathQuestion, MathSheet, Op};
     use crate::repo::char_cards;
+    use crate::repo::math_sessions;
     use crate::repo::{groups, words};
 
     fn temp_dir(tag: &str) -> PathBuf {
@@ -1909,6 +1926,54 @@ mod tests {
         assert_ne!(
             before, after,
             "只生成字卡也必须改变内容哈希，否则推送被跳过（与 ai_cards 同一坑）"
+        );
+    }
+
+/// 口算上机做题（迁移 0008）也必须参与内容哈希：孩子只做了一张口算卷、词没变时，
+/// 推送不能被判成「内容没变」而跳过（与 ai_cards / char_cards 同一坑）。
+#[test]
+fn math_practice_participates_in_content_hash() {
+        let conn = db::open_memory();
+        let before = content_hash(&conn).unwrap();
+        let sheet = MathSheet {
+            questions: vec![MathQuestion {
+                a: 3,
+                b: 4,
+                c: 10,
+                op1: Op::Mul,
+                op2: Op::Add,
+                t: 12,
+                d: 22,
+            }],
+            blanks: vec![4],
+        };
+        math_sessions::create(&conn, 1, "{}", &sheet).unwrap();
+        let after = content_hash(&conn).unwrap();
+        assert_ne!(before, after, "只做口算也必须改变内容哈希，否则推送被跳过");
+    }
+
+    /// 只做过口算的记录不能把「空库」判成非空：空库强推要先存档云端快照，
+    /// 新机器首次拉取不该弹覆盖确认——两件事都由 `library_is_empty` 决定。
+    #[test]
+    fn math_records_do_not_make_library_non_empty() {
+        let conn = db::open_memory();
+        assert!(library_is_empty(&conn).unwrap());
+        let sheet = MathSheet {
+            questions: vec![MathQuestion {
+                a: 3,
+                b: 4,
+                c: 10,
+                op1: Op::Mul,
+                op2: Op::Add,
+                t: 12,
+                d: 22,
+            }],
+            blanks: vec![4],
+        };
+        math_sessions::create(&conn, 1, "{}", &sheet).unwrap();
+        assert!(
+            library_is_empty(&conn).unwrap(),
+            "只做过一张口算卷仍算空库（词库与默写数据才是判定依据）"
         );
     }
 

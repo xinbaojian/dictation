@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-给二年级孩子的**学习小工具集合**（单机离线桌面应用）：一级顶栏切换工具，当前含「生词默写」（家长读词、孩子手写、家长批改；程序负责抽题、防偷看、记录错题）、「口算练习」（三数两步逆推口算卷，出题打印）与「查字」（家长输字词，逐字笔顺动画 + 部首/笔画数/结构/释义，AI 单字详解可选，见 wiki ADR-22）三个工具。
+给二年级孩子的**学习小工具集合**（单机离线桌面应用）：一级顶栏切换工具，当前含「生词默写」（家长读词、孩子手写、家长批改；程序负责抽题、防偷看、记录错题）、「口算练习」（三数两步逆推口算卷，可打印也可在电脑上做题，记录每次成绩与全对最快）与「查字」（家长输字词，逐字笔顺动画 + 部首/笔画数/结构/释义，AI 单字详解可选，见 wiki ADR-22）三个工具。
 
 - Rust + Tauri 2 + SQLite（rusqlite，bundled）
 - React 18 + TypeScript + Vite + Tailwind CSS 4
@@ -41,16 +41,16 @@ npm run tauri build        # 出安装包；需先设 TAURI_SIGNING_PRIVATE_KEY�
 ```
 app-icon.svg            应用图标唯一矢量源；改完跑 npm run icons
 app-icon.png            1024 预览图（由 SVG 渲染），别手改；src-tauri/icons/ 全部是生成物
-src-tauri/migrations/   0001 表结构、0002 会话进度、0003 错字标记、0004 分组树、0005 手工错字（只增不改，user_version 递增）
+src-tauri/migrations/   0001 表结构、0002 会话进度、0003 错字标记、0004 分组树、0005 手工错字、0006 AI 卡、0007 查字卡、0008 口算做题（只增不改，user_version 递增）
 src-tauri/src/db/       连接 + WAL + 迁移 + 启动时 pending 快照替换
                         （数据目录里还有同步用的 .sync-credentials.json / .sync-state.json /
                          .sync-pending-state.json / pending.db / backups/sync/，见 wiki/sync.md）
 src-tauri/src/ai/       AI 讲解卡客户端与配置（ADR-20，默认关闭）
 src-tauri/src/domain/   text.rs 粘贴切分、sampler.rs 抽题（纯函数，带单测）
-src-tauri/src/repo/     groups / words / sessions / word_progress / settings / backup / sync
-src-tauri/src/commands/ library.rs（11）/ quiz.rs（16）/ system.rs（11）/ sync.rs（8）/ ai.rs（8）/ tts.rs（4）/ math.rs（1）/ print.rs（1）（薄封装，共 60 个命令）
+src-tauri/src/repo/     groups / words / sessions / math_sessions / word_progress / settings / backup / sync
+src-tauri/src/commands/ library.rs（11）/ quiz.rs（16）/ system.rs（11）/ sync.rs（8）/ ai.rs（8）/ tts.rs（4）/ math.rs（11）/ print.rs（1）（薄封装，共 70 个命令）
 src-tauri/src/speech/   朗读：trait Speaker + 系统 TTS（say/SAPI/spd-say，ADR-19）+ SpeechService 路由与 LocalTts 本地合成（ADR-21）；模型下载在 src-tauri/src/tts/
-src/pages/              Pick / Quiz / Review / Mistakes / StrokeReview / History / Settings / Wordbook / PrintSheet / Lookup；math/（口算：MathSheet + example + math-sheet.css）
+src/pages/              Pick / Quiz / Review / Mistakes / StrokeReview / History / Settings / Wordbook / PrintSheet / Lookup；math/（口算：MathSheet 出题打印 + MathPractice 上机做题 + MathHistory 记录 + example + math-sheet.css）
 src/tools/registry.ts   工具注册表：顶栏一级菜单（TOOLS）与各工具二级菜单（NAV_BY_TOOL）、Route 联合类型
 src/lib/ipc.ts          全部自定义后端命令集中于此，类型来自 src/types.ts
 src/lib/strokes.ts      笔顺数据加载（分片缓存，本地 public/hanzi/，不联网）

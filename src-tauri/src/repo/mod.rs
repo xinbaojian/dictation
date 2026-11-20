@@ -2,6 +2,7 @@ pub mod ai_cards;
 pub mod backup;
 pub mod char_cards;
 pub mod groups;
+pub mod math_sessions;
 pub mod sessions;
 pub mod settings;
 pub mod sync;

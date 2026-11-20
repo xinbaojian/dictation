@@ -40,7 +40,8 @@ related: [architecture.md, decisions.md]
 | 设置 | `pages/Settings.tsx` | 遮罩/连对/字号、备份导出导入、打开数据目录（连字已挪到抽题页的抽词偏好）、AI 讲解配置区块、朗读语音区块（`components/TtsSettings.tsx`：引擎切换 + 语音包下载/试听/删除，ADR-21） |
 | 词表 | `pages/Wordbook.tsx` | 分组树（可折叠、默认全部折叠、**可拖动调整层级与顺序**）、词数/错题/最近练习、行内编辑、粘贴导入、标记错题 |
 | 打印 / 字帖 | `pages/PrintSheet.tsx` | A4 字帖：每行一个词横向排满（示范字 → 描红 → 空格），可选方格（田 / 米 / 方）、大小（10 / 12 / 14mm）、描红遍数（0 / 1 / 2）、抄写单 ↔ 默写单；选项存 localStorage（`printSheet.options`） |
-| 口算练习 | `pages/math/MathSheet.tsx` | 左侧条件面板（留空位置 / 两步运算符 / 四位置取值区间 / 答案显隐，选项存 localStorage）、A4 满幅卷面（3×10 格 + 可裁剪答案条 + 口诀示范条 `example.ts`）、出题走 `generate_math_sheet` 命令（区间默认 = 三段难度，自定义 = 单池平铺，见 `domain/math.rs`） |
+| 口算练习 | `pages/math/MathSheet.tsx` | 左侧条件面板（题量 / 留空位置 / 两步运算符 / 四位置取值区间 / 答案显隐，选项存 localStorage）、A4 满幅卷面（3 列、行数随题量 + 可裁剪答案条 + 口诀示范条 `example.ts`）、出题走 `generate_math_sheet` 命令（区间默认 = 三段难度，自定义 = 单池平铺，题量 5-50 见 `domain/math.rs`） |
+| 口算做题 | `pages/math/MathPractice.tsx` + `MathHistory.tsx` | 逐题卡（大字算式 + 屏下数字键盘 + 题号条回看），做题中不判对错、交卷后统一公布；题目开卷即快照进 `math_items`，成绩页给对错/用时/错题，记录页给历史 + 各题量「全对最快」 |
 | 查字 | `pages/Lookup.tsx` | 输入字词逐字出卡（`components/CharInfoCard.tsx`）：田字格笔顺动画（复用 `StrokeWord`）+ 拼音 + 部首/笔画数/结构/释义（`lib/dict.ts` 离线字典）；AI 未配置显示提示行，配置后可生成字卡并缓存秒开；见下「查字工具」 |
 
 ## 打印

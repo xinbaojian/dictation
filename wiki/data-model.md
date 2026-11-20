@@ -94,6 +94,22 @@ related: [quiz-flow.md, architecture.md]
 
 按字缓存，生成一次离线复用（`domain/char_card.rs` 的 validate 与 ai_card 同一套路）。**没有外键、也没有清卡联动**：词表增删改不影响本表——讲解针对的是「这个字」，不随词条走。表内容随整库快照同步（ADR-17）：`repo/sync.rs::TABLES` 已登记，只生成字卡也会改变 `content_hash`，两台机器一台生成、两台可用。同 ai_cards 先例，**不进备份 JSON**（备份只覆盖词表与进度）。API Key 同样不入库（ADR-20）。见 ADR-22。
 
+### math_sessions（口算上机做题，0008）
+
+| 字段 | 说明 |
+|---|---|
+| `seed` / `config_json` | 出题条件快照（pos/op1/op2/count/ranges），留档备查，方便按同条件复现一张卷（当前 UI 未展示） |
+| `total` | 题量（5-50，家长界面给 5~30） |
+| `correct_total` / `duration_ms` | 交卷后汇总：做对几道、总用时（= 每题 `elapsed_ms` 之和） |
+| `status` | `running` / `finished` / `abandoned`（放弃的卷不进记录页） |
+| `started_at` / `finished_at` | UTC 时间戳 |
+
+### math_items（口算每题，0008）
+
+`session_id` + `seq`（0 起，唯一索引）唯一；`a/b/c/d/t` + `op1/op2` 是**题目快照**（不靠 seed 重算，改出题算法也不影响历史卷），`blank_pos` 为留空位置，`input` 为原始作答（`NULL` 未做 / `''` 跳过），`correct` 为 0/1，`elapsed_ms` 为本题用时。
+
+判题只做整数比较（答案就是被留空的那位，`domain::math::value_at`）；**做题时不回传对错**，交卷后统一公布。两张表都登记在 `repo/sync.rs::TABLES`（只做口算也要改变 `content_hash`），但**不进备份 JSON**（备份只覆盖词表与进度，与默写历史一致）。
+
 ### _sync_meta（只在同步启用后出现）
 
 `key TEXT PRIMARY KEY, value TEXT NOT NULL`，单行 `key='meta'`，值是 `SnapshotMeta` JSON（deviceId / deviceName / appVersion / userVersion / exportedAt / contentHash）。由 `repo/sync.rs::create_snapshot` 写进快照，**拉取替换后主库也会带着它**——所以这个表是「本机库是不是那份快照」的唯一正面证据（`commit_pending_state` 靠它决定是否补提交状态）。

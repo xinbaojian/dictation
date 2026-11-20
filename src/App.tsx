@@ -4,6 +4,8 @@ import { api } from "./lib/ipc";
 import { useAutoUpdate } from "./lib/updater";
 import History from "./pages/History";
 import LookupPage from "./pages/Lookup";
+import MathHistory from "./pages/math/MathHistory";
+import MathPractice from "./pages/math/MathPractice";
 import MathSheetPage from "./pages/math/MathSheet";
 import Mistakes from "./pages/Mistakes";
 import Pick from "./pages/Pick";
@@ -72,7 +74,7 @@ export default function App() {
   // 侧栏高亮：quiz/review/stroke 归「默写 / 错题」，打印页按来源归「词表 / 错题」
   let activeNav: string;
   if (route.name === "settings") activeNav = "";
-  else if (route.name === "math") activeNav = "sheet";
+  else if (route.name === "math") activeNav = route.page === "practice" ? "sheet" : route.page;
   else if (route.name === "lookup") activeNav = "lookup";
   else if (route.page === "quiz" || route.page === "review") activeNav = "pick";
   else if (route.page === "stroke") activeNav = "mistakes";
@@ -84,7 +86,9 @@ export default function App() {
 
   const updateAvailable = updater.state.phase === "available" && !updater.state.dismissed;
   // 默写、批改、笔画复习、打印、设置页不弹横幅：前几个不能打断孩子，设置页自己有完整卡片
-  const quietRoute = ["quiz", "review", "stroke", "print", "settings", "lookup"].includes(routeKey);
+  const quietRoute = ["quiz", "review", "stroke", "print", "settings", "lookup", "practice"].includes(
+    routeKey,
+  );
   const showUpdateBanner = updateAvailable && !quietRoute;
   const showSyncBanner = !!syncNotice && !quietRoute;
   const settingsDot = updateAvailable || !!syncNotice;
@@ -254,7 +258,35 @@ export default function App() {
               onGoWordbook={() => navigate({ name: "dictation", page: "wordbook" })}
             />
           )}
-          {route.name === "math" && <MathSheetPage />}
+          {route.name === "math" && route.page === "sheet" && (
+            <MathSheetPage
+              onStartPractice={(sessionId) =>
+                navigate({ name: "math", page: "practice", sessionId })
+              }
+            />
+          )}
+          {route.name === "math" && route.page === "practice" && (
+            <MathPractice
+              key={route.sessionId}
+              sessionId={route.sessionId}
+              onExit={() =>
+                navigate(
+                  route.from === "history"
+                    ? { name: "math", page: "records" }
+                    : { name: "math", page: "sheet" },
+                )
+              }
+              onAgain={() => navigate({ name: "math", page: "sheet" })}
+            />
+          )}
+          {route.name === "math" && route.page === "records" && (
+            <MathHistory
+              onOpen={(sessionId) =>
+                navigate({ name: "math", page: "practice", sessionId, from: "history" })
+              }
+              onStart={() => navigate({ name: "math", page: "sheet" })}
+            />
+          )}
           {route.name === "lookup" && <LookupPage />}
         </main>
       </div>

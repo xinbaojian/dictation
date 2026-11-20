@@ -12,6 +12,11 @@ import type {
   ImportSummary,
   MathRanges,
   MathSheet,
+  MathAnswerAck,
+  MathBest,
+  MathPractice,
+  MathResult,
+  MathSummary,
   Mistake,
   ReviewResult,
   SampleOptions,
@@ -83,13 +88,14 @@ export const api = {
     invoke<void>("set_word_mastered", { wordId, mastered }),
 
   // 口算练习
-  /** 出一张 30 题的口算卷；ranges 缺省用默认区间；无解符号组合返回 null */
+  /** 出一张口算卷；ranges 缺省用默认区间；count 缺省 30 题；无解符号组合返回 null */
   generateMathSheet: (
     seed: number,
     pos: string,
     op1: string,
     op2: string,
     ranges?: MathRanges,
+    count?: number,
   ) =>
     invoke<MathSheet | null>("generate_math_sheet", {
       seed,
@@ -97,7 +103,40 @@ export const api = {
       op1,
       op2,
       ranges: ranges ?? null,
+      count: count ?? null,
     }),
+  /** 把当前条件出的卷落库，开始上机做题（题目开卷即快照，与打印的纸质卷逐题一致） */
+  startMathSession: (
+    seed: number,
+    pos: string,
+    op1: string,
+    op2: string,
+    ranges?: MathRanges,
+    count?: number,
+  ) =>
+    invoke<MathPractice>("start_math_session", {
+      seed,
+      pos,
+      op1,
+      op2,
+      ranges: ranges ?? null,
+      count: count ?? null,
+    }),
+  getMathPractice: (id: number) => invoke<MathPractice>("get_math_practice", { id }),
+  /** 最近一张没做完的卷；没有返回 null */
+  latestRunningMath: () => invoke<MathPractice | null>("latest_running_math"),
+  /** 交一题：只回进度，不回对错（全场结束后统一公布） */
+  submitMathAnswer: (id: number, seq: number, input: string, elapsedMs: number | null) =>
+    invoke<MathAnswerAck>("submit_math_answer", { id, seq, input, elapsedMs }),
+  finishMathSession: (id: number) => invoke<MathResult>("finish_math_session", { id }),
+  abandonMathSession: (id: number) => invoke<void>("abandon_math_session", { id }),
+  /** 做题记录（不含已放弃的卷） */
+  listMathSessions: (limit = 30) => invoke<MathSummary[]>("list_math_sessions", { limit }),
+  /** 回看某一次的成绩单（只读） */
+  getMathResult: (id: number) => invoke<MathResult>("get_math_result", { id }),
+  /** 各题量的全对最快纪录 */
+  mathBestTimes: () => invoke<MathBest[]>("math_best_times"),
+  deleteMathSession: (id: number) => invoke<void>("delete_math_session", { id }),
 
   // 打印
   /** macOS/Linux WebView 不支持 window.print()：写临时 HTML 并用默认浏览器打开 */
@@ -176,6 +215,12 @@ export function errorMessage(err: unknown): string {
   if (typeof err === "string") return err;
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+/** 毫秒 → 分:秒；口算用时展示统一用它（做题页 / 成绩单 / 记录页） */
+export function formatDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
 /** 练习时间的相对描述，用于分组列表 */
