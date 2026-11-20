@@ -59,6 +59,8 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
   const [busy, setBusy] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<Mistake | null>(null);
+  // 删除词条是不可撤销的数据操作，先弹确认；弹窗里另给一条「只移出错题本」的退路
+  const [deleting, setDeleting] = useState<Mistake | null>(null);
   // 开始默写前先确认：默写会整屏切走，误点一下孩子就被打断，还平白多出一场记录
   const [askPractice, setAskPractice] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -168,6 +170,19 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
     }
   };
 
+  /** 彻底删除词条：错题记录和词语表里的这一条一起没（不可撤销，走确认弹窗） */
+  const removeMistake = async (word: Mistake) => {
+    try {
+      await api.deleteWord(word.id);
+      setDeleting(null);
+      await reload(filter);
+      setGroups(await api.listGroups());
+      notify("ok", "「" + word.text + "」已删除");
+    } catch (e) {
+      notify("error", errorMessage(e));
+    }
+  };
+
   if (loading) {
     return <div className="flex flex-1 items-center justify-center text-sm text-stone-400">加载中…</div>;
   }
@@ -271,7 +286,7 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
                 <th className="w-24 py-2 text-left font-normal">错误次数</th>
                 <th className="w-40 py-2 text-left font-normal">连对进度</th>
                 <th className="w-36 py-2 text-left font-normal">最近出错</th>
-                <th className="w-28 py-2 pr-8 text-right font-normal">操作</th>
+                <th className="w-40 py-2 pr-8 text-right font-normal">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -312,6 +327,13 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
                     >
                       已掌握
                     </button>
+                    <button
+                      onClick={() => setDeleting(word)}
+                      title="从错题本和词语表中彻底删除这个词"
+                      className="rounded px-2 py-1 text-xs text-stone-400 hover:bg-rose-50 hover:text-rose-600"
+                    >
+                      删除
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -337,6 +359,29 @@ export default function Mistakes({ onStart, onGoWordbook, onPrint, onStroke }: M
             setAskPractice(false);
             void practice();
           }}
+        />
+      )}
+
+      {deleting && (
+        <ConfirmModal
+          title="删除这个词语？"
+          body={
+            "「" +
+            deleting.text +
+            "」会从错题本和词语表「" +
+            deleting.groupName +
+            "」里一起删除，历次错误记录也一并消失，不可撤销。\n" +
+            "如果只是不想让孩子再练它、但词还要留在词语表里，选左下角「只移出错题本」。"
+          }
+          confirmText="删除词条"
+          extraText="只移出错题本"
+          onExtra={() => {
+            const word = deleting;
+            setDeleting(null);
+            void master(word);
+          }}
+          onCancel={() => setDeleting(null)}
+          onConfirm={() => void removeMistake(deleting)}
         />
       )}
 
