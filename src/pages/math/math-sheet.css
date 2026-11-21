@@ -85,11 +85,6 @@
 .ms-btn-ghost:hover {
   background: #fbf0e7;
 }
-.ms-btn-ghost[aria-pressed="true"] {
-  background: #f1e7da;
-  color: #6b5c49;
-  border-color: #cbb79f;
-}
 .ms-btn-alt {
   background: #4f7a66;
 }

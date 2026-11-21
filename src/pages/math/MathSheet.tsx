@@ -364,15 +364,30 @@ export default function MathSheetPage({
           </p>
         </div>
 
+        <div className="flex flex-col gap-1">
+          <span className="ms-sec-title">参考答案</span>
+          {/* 选中项 = 当前状态（孩子做 ⇒ 卷面无答案；家长版 ⇒ 卷尾答案条），别再用「点击后的动作」当文案，会被读反 */}
+          <label className="ms-opt">
+            <input
+              type="radio"
+              name="ans"
+              checked={!options.showAns}
+              onChange={() => setOptions((o) => ({ ...o, showAns: false }))}
+            />
+            隐藏答案 · 给孩子做
+          </label>
+          <label className="ms-opt">
+            <input
+              type="radio"
+              name="ans"
+              checked={options.showAns}
+              onChange={() => setOptions((o) => ({ ...o, showAns: true }))}
+            />
+            显示答案 · 家长版
+          </label>
+        </div>
+
         <div className="mt-1 flex flex-col gap-1.5">
-          <button
-            className="ms-btn ms-btn-ghost w-full"
-            type="button"
-            aria-pressed={!options.showAns}
-            onClick={() => setOptions((o) => ({ ...o, showAns: !o.showAns }))}
-          >
-            {options.showAns ? "隐藏答案 · 给孩子" : "显示答案 · 家长版"}
-          </button>
           <button
             className="ms-btn w-full"
             type="button"
