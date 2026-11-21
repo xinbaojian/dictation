@@ -70,6 +70,25 @@ pub fn set_mastered(conn: &Connection, word_id: i64, mastered: bool) -> AppResul
     Ok(())
 }
 
+/// 修改批改结果：把一次「批改为错」改成「批改为对」（家长批改手误的补救）。
+///
+/// 语义是**补偿差量**而不是精确回滚：抹掉那次错（`wrong_count-1`，下限 0），
+/// 再把这次视为答对（复用 `mark_correct` 的推进与出本逻辑）。
+/// 已清零的连对计数无法恢复到冤枉前的精确值——补偿为「+1」，即孩子可能需要
+/// 多答对一次才出本；这是「改对」可解释的代价（见 wiki ADR-25）。
+/// 返回 true 表示这次修改让词条从错题本出本。
+pub fn revise_wrong_to_correct(
+    conn: &Connection,
+    word_id: i64,
+    streak_needed: i64,
+) -> AppResult<bool> {
+    conn.execute(
+        "UPDATE words SET wrong_count = max(0, wrong_count - 1) WHERE id = ?1",
+        params![word_id],
+    )?;
+    mark_correct(conn, word_id, streak_needed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,5 +143,42 @@ mod tests {
         mark_correct(&conn, id, STREAK_TO_MASTER).unwrap();
         mark_wrong(&conn, id).unwrap();
         assert_eq!(status(&conn, id), ("learning".into(), 2, 0));
+    }
+
+    #[test]
+    fn revise_wrong_to_correct_compensates_and_can_graduate() {
+        let conn = db::open_memory();
+        let id = word(&conn);
+        // 错一次后又答对一次：本该再对一次就出本（needed = 2）
+        mark_wrong(&conn, id).unwrap();
+        mark_correct(&conn, id, STREAK_TO_MASTER).unwrap();
+
+        // 家长发现最早那次其实是对的：把那场的结果改成对
+        // ——抹掉那次错（wrong_count 回 0），这次修改本身按答对推进（streak 1→2 达标出本）
+        let graduated = revise_wrong_to_correct(&conn, id, STREAK_TO_MASTER).unwrap();
+        assert!(graduated, "连对达标就该出本");
+        assert_eq!(status(&conn, id), ("mastered".into(), 0, 0));
+    }
+
+    #[test]
+    fn revise_wrong_to_correct_keeps_learning_when_streak_short() {
+        let conn = db::open_memory();
+        let id = word(&conn);
+        mark_wrong(&conn, id).unwrap();
+        // 没有别的答对记录：改成对后 streak 只到 1，还没达标
+        let graduated = revise_wrong_to_correct(&conn, id, STREAK_TO_MASTER).unwrap();
+        assert!(!graduated);
+        assert_eq!(status(&conn, id), ("learning".into(), 0, 1));
+    }
+
+    #[test]
+    fn revise_wrong_to_correct_never_goes_negative() {
+        let conn = db::open_memory();
+        let id = word(&conn);
+        mark_wrong(&conn, id).unwrap();
+        // 防御性边界：wrong_count 已被清成 0（历史数据/外部改库）时也不能减成负数
+        conn.execute("UPDATE words SET wrong_count = 0 WHERE id = ?1", params![id]).unwrap();
+        revise_wrong_to_correct(&conn, id, STREAK_TO_MASTER).unwrap();
+        assert_eq!(status(&conn, id).1, 0);
     }
 }

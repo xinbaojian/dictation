@@ -56,6 +56,16 @@ related: [data-model.md, decisions.md]
 
 提交状态不是 `reviewing` 时拒绝（防重复提交）。
 
+### 修改批改结果（记录页默写详情，ADR-25）
+
+批改手误的补救：写对的被标成错、写错的忘了标，在「记录 → 默写详情」弹窗里点行尾「对 / 错」即改；错词还能点字改「不会写的字」（`revise_review_item` → `repo/sessions.rs::revise_item`）。只允许改 `finished` 会话；一次修改在一个事务里完成并重算 `wrong_total`。进度按**差量补偿**联动（只经 `word_progress`）：
+
+```
+改回对（原判错）→ wrong_count-1（下限 0）+ 记一次答对（连对达标照常出本）
+记为错（原判对）→ mark_wrong（入本；原判曾让它出本的会自动回错题本）
+仍为错只换错字 → 不动进度，只写 wrong_chars（弱字池随之生效）
+```
+
 ## 五、错题本出本（`repo/word_progress.rs`）
 
 手工入口：错题本页「添加词语」→ `words::add_mistake`。词条不存在就先建，存在就复用；进度仍走 `mark_wrong`（错误次数 +1），标的字写进 `words.wrong_chars`（ADR-16），与批改记录合并展示。

@@ -80,6 +80,7 @@ pub fn run() {
             commands::quiz::finish_session,
             commands::quiz::abandon_session,
             commands::quiz::submit_review,
+            commands::quiz::revise_review_item,
             commands::quiz::retry_session,
             commands::quiz::list_sessions,
             commands::quiz::delete_session,

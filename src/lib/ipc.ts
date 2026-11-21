@@ -19,6 +19,7 @@ import type {
   MathSummary,
   Mistake,
   ReviewResult,
+  ReviseItemResult,
   SampleOptions,
   Session,
   SessionSummary,
@@ -69,6 +70,10 @@ export const api = {
   submitReview: (sessionId: number, wrongItems: WrongMark[]) =>
     invoke<ReviewResult>("submit_review", { sessionId, wrongItems }),
   retrySession: (id: number) => invoke<Session>("retry_session", { id }),
+  /** 修改一条批改结果（记录页默写详情）：toWrong=false 改回对、true 记为错；
+   *  wrongChars 为不会写的字下标（记为错时生效，越界丢弃）；进度联动在后端 word_progress */
+  reviseReviewItem: (itemId: number, toWrong: boolean, wrongChars: number[]) =>
+    invoke<ReviseItemResult>("revise_review_item", { itemId, toWrong, wrongChars }),
   listSessions: (limit: number) => invoke<SessionSummary[]>("list_sessions", { limit }),
   /** 删记录不动词条进度：错题本与连对次数是学习结果，不跟着记录走 */
   deleteSession: (id: number) => invoke<void>("delete_session", { id }),

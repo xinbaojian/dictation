@@ -3,7 +3,7 @@ use crate::domain::text::{format_char_indices, parse_char_indices};
 use crate::error::{AppError, AppResult};
 use crate::repo::{settings, word_progress};
 use rand::seq::SliceRandom;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -96,6 +96,15 @@ pub struct ReviewResult {
     pub correct: i64,
     /// 本次批改后移出错题本的词数
     pub graduated: i64,
+}
+
+/// 修改一条批改结果的回执（记录页默写详情用）
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviseItemResult {
+    /// 改回对时，这次修改是否让词条连对达标、移出了错题本
+    pub graduated: bool,
+    pub session: SessionDto,
 }
 
 /// 批改时提交的一项：item_id + 不会写的字下标（空 = 整词算错）
@@ -595,6 +604,88 @@ pub fn submit_review(
     })
 }
 
+/// 修改一条批改结果（记录页「默写详情」用）：家长批改手误的补救——
+/// 写对的被标成错、写错的忘了标，都能在这里改回来。
+///
+/// 进度按**差量补偿**联动（对/错互换必须动学习进度，但只经 `word_progress`）：
+/// - 改回对：`wrong_count-1` + 记一次答对（连对达标照常出本）
+/// - 记为错：直接 `mark_wrong`（若原判曾让它出本，会自动回错题本）
+/// - 仍为错、只换「不会写的字」：不动进度，只写 `wrong_chars`（弱字池随之生效）
+///
+/// 只允许改 `finished` 会话的条目：没批改的去批改页走正常流程。
+pub fn revise_item(
+    conn: &Connection,
+    item_id: i64,
+    to_wrong: bool,
+    chars: &[i64],
+) -> AppResult<ReviseItemResult> {
+    let item = conn
+        .query_row(
+            "SELECT i.session_id, i.word_id, w.text, i.result
+             FROM session_items i JOIN words w ON w.id = i.word_id
+             WHERE i.id = ?1",
+            params![item_id],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| AppError::msg("这条默写记录不存在"))?;
+    let (session_id, word_id, text, result) = item;
+    let status: String = conn.query_row(
+        "SELECT status FROM sessions WHERE id = ?1",
+        params![session_id],
+        |r| r.get(0),
+    )?;
+    if status != "finished" {
+        return Err(AppError::msg("这次默写还没批改完，先去批改页改"));
+    }
+    // 越界/负数下标直接丢弃（词条后来改短时老下标会越界）
+    let len = text.chars().count() as i64;
+    let chars: Vec<i64> = chars.iter().copied().filter(|&c| c >= 0 && c < len).collect();
+    let streak = settings::load(conn)?.streak_to_master;
+    let mut graduated = false;
+    let tx = conn.unchecked_transaction()?;
+    if to_wrong {
+        if result == "wrong" {
+            // 仍为错，只换标错的字
+            tx.execute(
+                "UPDATE session_items SET wrong_chars = ?2 WHERE id = ?1",
+                params![item_id, format_char_indices(&chars)],
+            )?;
+        } else {
+            // 原判对（或从未判过）：记一次错
+            word_progress::mark_wrong(&tx, word_id)?;
+            tx.execute(
+                "UPDATE session_items SET result = 'wrong', wrong_chars = ?2 WHERE id = ?1",
+                params![item_id, format_char_indices(&chars)],
+            )?;
+        }
+    } else if result == "wrong" {
+        // 原判错：改回对
+        graduated = word_progress::revise_wrong_to_correct(&tx, word_id, streak)?;
+        tx.execute(
+            "UPDATE session_items SET result = 'correct', wrong_chars = '' WHERE id = ?1",
+            params![item_id],
+        )?;
+    }
+    // 原判对改成对：无事可做（前端不会发，稳一手不报错）
+    tx.execute(
+        "UPDATE sessions
+         SET wrong_total = (SELECT COUNT(*) FROM session_items
+                            WHERE session_id = ?1 AND result = 'wrong')
+         WHERE id = ?1",
+        params![session_id],
+    )?;
+    tx.commit()?;
+    Ok(ReviseItemResult { graduated, session: get(conn, session_id)? })
+}
+
 /// 用某次默写里的错词重新开一场
 pub fn retry_wrong_words(conn: &Connection, session_id: i64) -> AppResult<i64> {
     let source = get(conn, session_id)?;
@@ -748,6 +839,107 @@ mod tests {
         finish_quiz(&conn, id).unwrap();
         submit_review(&conn, id, &[]).unwrap();
         assert!(submit_review(&conn, id, &[]).is_err());
+    }
+
+    fn find_item<'a>(s: &'a SessionDto, text: &str) -> &'a SessionItemDto {
+        s.items.iter().find(|i| i.text == text).unwrap()
+    }
+
+    fn word_state(conn: &Connection, text: &str) -> (String, i64, i64) {
+        conn.query_row(
+            "SELECT status, wrong_count, correct_streak FROM words WHERE text = ?1",
+            params![text],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn revise_to_wrong_marks_word_and_updates_totals() {
+        let (conn, gid) = seed();
+        let id = create(&conn, &[gid], Scope::All, 0, false, SampleOptions::default()).unwrap();
+        finish_quiz(&conn, id).unwrap();
+        submit_review(&conn, id, &[]).unwrap();
+
+        // 忘标了：把「春天」补记为错
+        let s = get(&conn, id).unwrap();
+        let r = revise_item(&conn, find_item(&s, "春天").id, true, &[]).unwrap();
+        assert!(!r.graduated);
+        assert_eq!(r.session.wrong_total, 1);
+        assert_eq!(find_item(&r.session, "春天").result, "wrong");
+
+        let mistakes = words::list_mistakes(&conn, None).unwrap();
+        assert_eq!(mistakes.len(), 1, "漏标的错词要进错题本");
+        assert_eq!(word_state(&conn, "春天"), ("learning".into(), 1, 0));
+    }
+
+    #[test]
+    fn revise_to_correct_compensates_progress() {
+        let (conn, gid) = seed();
+        let id = create(&conn, &[gid], Scope::All, 0, false, SampleOptions::default()).unwrap();
+        let s = get(&conn, id).unwrap();
+        let spring = find_item(&s, "春天").id;
+        finish_quiz(&conn, id).unwrap();
+        submit_review(&conn, id, &marks(&[spring])).unwrap();
+
+        // 手误标错：改回对。那次错抹掉（wrong_count 回 0），这次算答对（streak 1）
+        let r = revise_item(&conn, spring, false, &[]).unwrap();
+        assert!(!r.graduated, "连对还没到次数，不出本");
+        assert_eq!(r.session.wrong_total, 0);
+        let item = find_item(&r.session, "春天");
+        assert_eq!(item.result, "correct");
+        assert!(item.wrong_chars.is_empty());
+        assert_eq!(word_state(&conn, "春天"), ("learning".into(), 0, 1));
+    }
+
+    #[test]
+    fn revise_to_correct_graduates_when_streak_reaches_threshold() {
+        let (conn, gid) = seed();
+        // 场 1：春天错（入本）；场 2：春天对（连对 1）；家长发现场 1 标错了，改回对
+        // → wrong_count 归 0 + 记一次对（连对 2 达标）→ 出本
+        let first = create(&conn, &[gid], Scope::All, 0, false, SampleOptions::default()).unwrap();
+        let s1 = get(&conn, first).unwrap();
+        let spring1 = find_item(&s1, "春天").id;
+        finish_quiz(&conn, first).unwrap();
+        submit_review(&conn, first, &marks(&[spring1])).unwrap();
+
+        let second = create(&conn, &[gid], Scope::All, 0, false, SampleOptions::default()).unwrap();
+        finish_quiz(&conn, second).unwrap();
+        submit_review(&conn, second, &[]).unwrap();
+        assert_eq!(word_state(&conn, "春天"), ("learning".into(), 1, 1));
+
+        let r = revise_item(&conn, spring1, false, &[]).unwrap();
+        assert!(r.graduated, "改回对后连对达标，应出本");
+        assert_eq!(word_state(&conn, "春天"), ("mastered".into(), 0, 0));
+        assert!(words::list_mistakes(&conn, None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn revise_chars_only_relabels_wrong_chars() {
+        let (conn, gid) = seed();
+        let id = create(&conn, &[gid], Scope::All, 0, false, SampleOptions::default()).unwrap();
+        let s = get(&conn, id).unwrap();
+        let spring = find_item(&s, "春天").id;
+        finish_quiz(&conn, id).unwrap();
+        submit_review(&conn, id, &[WrongMark { item_id: spring, chars: vec![0] }]).unwrap();
+
+        // 仍为错、只把错字从第 0 个换到第 1 个；越界下标丢弃、进度不再 +1
+        let r = revise_item(&conn, spring, true, &[1, 9]).unwrap();
+        let item = find_item(&r.session, "春天");
+        assert_eq!(item.result, "wrong");
+        assert_eq!(item.wrong_chars, vec![1], "越界下标（9）要丢弃");
+        assert_eq!(word_state(&conn, "春天").1, 1, "只换字不能把错误次数再 +1");
+    }
+
+    #[test]
+    fn revise_rejects_unfinished_sessions_and_missing_items() {
+        let (conn, gid) = seed();
+        let id = create(&conn, &[gid], Scope::All, 0, false, SampleOptions::default()).unwrap();
+        let item = get(&conn, id).unwrap().items[0].id;
+        assert!(revise_item(&conn, item, true, &[]).is_err(), "做题中不能改结果");
+        finish_quiz(&conn, id).unwrap();
+        assert!(revise_item(&conn, item, true, &[]).is_err(), "没批改的要去批改页");
+        assert!(revise_item(&conn, 9999, true, &[]).is_err());
     }
 
     #[test]

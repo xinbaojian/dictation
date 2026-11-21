@@ -1,6 +1,8 @@
 use crate::domain::sampler::{self, Scope};
 use crate::error::AppResult;
-use crate::repo::sessions::{self, ReviewResult, SampleOptions, SessionDto, SessionSummaryDto, WrongMark};
+use crate::repo::sessions::{
+    self, ReviseItemResult, ReviewResult, SampleOptions, SessionDto, SessionSummaryDto, WrongMark,
+};
 use crate::repo::words::{self, MistakeDto, WordDto};
 use crate::repo::word_progress;
 use crate::AppState;
@@ -76,6 +78,20 @@ pub fn submit_review(
 ) -> AppResult<ReviewResult> {
     let conn = state.conn()?;
     sessions::submit_review(&conn, session_id, &wrong_items)
+}
+
+/// 修改一条批改结果（记录页「默写详情」）：to_wrong=false 改回对、true 记为错；
+/// wrong_chars 为「不会写的字」下标（记为错时生效，越界自动丢弃）。
+/// 进度联动见 `repo::sessions::revise_item`（只经 word_progress）。
+#[tauri::command]
+pub fn revise_review_item(
+    state: State<'_, AppState>,
+    item_id: i64,
+    to_wrong: bool,
+    wrong_chars: Vec<i64>,
+) -> AppResult<ReviseItemResult> {
+    let conn = state.conn()?;
+    sessions::revise_item(&conn, item_id, to_wrong, &wrong_chars)
 }
 
 #[tauri::command]

@@ -77,6 +77,13 @@ export interface WrongMark {
   chars: number[];
 }
 
+/** 修改一条批改结果的回执（记录页默写详情） */
+export interface ReviseItemResult {
+  /** 改回对时，这次修改是否让词条连对达标、移出了错题本 */
+  graduated: boolean;
+  session: Session;
+}
+
 export interface Session {
   id: number;
   mode: "group" | "mistake";
