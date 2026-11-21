@@ -189,3 +189,18 @@ related: [overview.md, quiz-flow.md]
   - 两张新表必须登记 `repo/sync.rs::TABLES`（只做口算也要改变 `content_hash`，否则推送被判「内容没变」跳过），且都是 `INTEGER PRIMARY KEY`（哈希前提）
   - **30 题的输出不能变**：`generate_count` 在 count=30 时的整卷指纹由测试钉住（`default_thirty_sheet_fingerprint_is_pinned`），改出题逻辑必须显式更新指纹——那等于确认已打印的旧卷作废
 - **代价**：每题一行 `math_items`，随做题次数增长（记录页可删整卷）；`duration_ms` 是前端每题用时之和，挂着不关会算进用时（本来就是他的时间，不做空闲剔除）
+
+## ADR-24 口算重做错题：错题复制成新卷，不碰原卷、不参与纪录
+
+- **结论**：交卷后的成绩单有错题时显示「重做这 N 道错题」（`pages/math/MathPractice.tsx` 的 ResultView）。重做 = `repo/math_sessions.rs::redo_wrong` 把**已交卷**卷子里 `correct IS NULL OR correct = 0` 的题（含没做、空着交的）按原题号顺序复制成一张新的 `running` 卷（`insert_session`，题号从 0 重编、作答与用时清零，`config_json` 记 `redoOf`），复用现成的做题/交卷/成绩单全流程。`math_sessions.redo_of`（0009 迁移，`ON DELETE SET NULL`）标记重做卷：做题页与成绩单给「错题重做」标识、记录页打标签、出题页「继续上次」文案区分。
+- **理由**：
+  - 复制成新卷而不是在原卷上「清空错题重做」：原卷成绩是历史事实，家长要看「第一次做对了多少」；改原卷会让记录页与错题对不上
+  - 复制成新卷而不是纯前端练习：做题/断点续做/交卷/成绩单/放弃整套逻辑直接复用，中途退出也能续；重做本身也是一次练习，落库后记录页可见
+  - **重做卷不参与「全对最快」**：它只做错题、题量又可能与正式卷撞车（如重做 5 道错题 vs 正式 5 道卷），用时不可比。四个出口全堵：`finish` 的 `new_best`、`best_ms`、`best_times`、`list` 的 `is_best`（内外两层）都过滤 `redo_of IS NULL`
+  - 重做卷交卷后仍有错题可继续再重做（`redo_of` 链向直接来源卷），错题越做越少，天然收敛
+- **红线**：
+  - 只能对 `status='finished'` 的卷重做（要判题结果）；全对的卷报「没有错题」
+  - `redo_wrong` 对坏 `config_json` 要稳：非法 JSON、合法但非对象（数组/数字）都退回空对象再记 `redoOf`——serde_json 对非对象的下标赋值会 panic
+  - 错题口径三处必须一致：`wrong_seqs`（`correct != Some(true)`）、`redo_wrong` 的复制条件、前端按钮数量（`it.correct !== true`）
+- **已知取舍**：删除来源卷后，`ON DELETE SET NULL` 使重做卷回落为普通卷、随即参与「全对最快」——触发苛刻（家长手动删卷 + 重做卷恰好快于所有同题量正式卷）且只影响纪录观感（成绩与错题数据完好），不做删除前的级联提示
+- **代价**：记录页多一类行（已打标签区分）；`redo_of` 随整库快照同步（`SELECT *` 自动带列，迁移加列的哈希变化由 `rebase_baseline_after_migration` 吸收，同步层零改动）

@@ -9,7 +9,7 @@
 //! 与 `sessions` / `session_items` 无关：后者的 `word_id` 是 `words` 的外键，
 //! 口算题没有对应词条（见迁移 0008 的注释）。
 
-use crate::domain::math::MathSheet;
+use crate::domain::math::{MathQuestion, MathSheet, Op};
 use crate::error::{AppError, AppResult};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -47,6 +47,8 @@ pub struct MathPracticeDto {
     pub finished_at: Option<String>,
     pub correct_total: Option<i64>,
     pub duration_ms: Option<i64>,
+    /// 非空 = 错题重做卷（值为来源卷 id）；重做卷不参与「全对最快」纪录
+    pub redo_of: Option<i64>,
     pub items: Vec<MathItemDto>,
 }
 
@@ -64,6 +66,8 @@ pub struct MathResultDto {
     pub best_ms: Option<i64>,
     /// 本次是否刷新了最快纪录
     pub new_best: bool,
+    /// 非空 = 错题重做卷（值为来源卷 id）；重做卷不参与「全对最快」纪录
+    pub redo_of: Option<i64>,
     pub items: Vec<MathItemDto>,
 }
 
@@ -80,6 +84,8 @@ pub struct MathSummaryDto {
     pub status: String,
     pub started_at: String,
     pub finished_at: Option<String>,
+    /// 非空 = 错题重做卷（值为来源卷 id）；重做卷不参与「全对最快」纪录
+    pub redo_of: Option<i64>,
     /// 同为该题量的全对最快（并列也算）
     pub is_best: bool,
 }
@@ -118,14 +124,25 @@ pub fn create(
     config_json: &str,
     sheet: &MathSheet,
 ) -> AppResult<MathPracticeDto> {
+    insert_session(conn, seed, config_json, sheet, None)
+}
+
+/// `create` 的实现：`redo_of = Some(来源卷)` 时开出的是错题重做卷
+fn insert_session(
+    conn: &Connection,
+    seed: u32,
+    config_json: &str,
+    sheet: &MathSheet,
+    redo_of: Option<i64>,
+) -> AppResult<MathPracticeDto> {
     if sheet.questions.is_empty() || sheet.questions.len() != sheet.blanks.len() {
         return Err(AppError::msg("题目与留空位置数量不一致，请重新出题"));
     }
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "INSERT INTO math_sessions (seed, config_json, total, status, started_at)
-         VALUES (?1, ?2, ?3, 'running', strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
-        params![seed as i64, config_json, sheet.questions.len() as i64],
+        "INSERT INTO math_sessions (seed, config_json, total, status, started_at, redo_of)
+         VALUES (?1, ?2, ?3, 'running', strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?4)",
+        params![seed as i64, config_json, sheet.questions.len() as i64, redo_of],
     )?;
     let id = tx.last_insert_rowid();
     {
@@ -187,7 +204,7 @@ fn list_items(conn: &Connection, session_id: i64, reveal: bool) -> AppResult<Vec
 pub fn get(conn: &Connection, id: i64) -> AppResult<MathPracticeDto> {
     let head = conn
         .query_row(
-            "SELECT seed, total, status, started_at, finished_at, correct_total, duration_ms
+            "SELECT seed, total, status, started_at, finished_at, correct_total, duration_ms, redo_of
              FROM math_sessions WHERE id = ?1",
             params![id],
             |r| {
@@ -199,12 +216,13 @@ pub fn get(conn: &Connection, id: i64) -> AppResult<MathPracticeDto> {
                     r.get::<_, Option<String>>(4)?,
                     r.get::<_, Option<i64>>(5)?,
                     r.get::<_, Option<i64>>(6)?,
+                    r.get::<_, Option<i64>>(7)?,
                 ))
             },
         )
         .optional()?
         .ok_or_else(missing)?;
-    let (seed, total, status, started_at, finished_at, correct_total, duration_ms) = head;
+    let (seed, total, status, started_at, finished_at, correct_total, duration_ms, redo_of) = head;
     // 做题中不下发对错（ADR-23）：判题结果只在交卷后的成绩单里出现
     let reveal = status == "finished";
     Ok(MathPracticeDto {
@@ -216,6 +234,7 @@ pub fn get(conn: &Connection, id: i64) -> AppResult<MathPracticeDto> {
         finished_at,
         correct_total,
         duration_ms,
+        redo_of,
         items: list_items(conn, id, reveal)?,
     })
 }
@@ -297,6 +316,11 @@ pub fn finish(conn: &Connection, id: i64) -> AppResult<MathResultDto> {
     let total: i64 = conn.query_row("SELECT total FROM math_sessions WHERE id = ?1", params![id], |r| {
         r.get(0)
     })?;
+    // 重做卷只做错题、题量又可能与正式卷相同，全对再快也不能算「全对最快」纪录
+    let redo_of: Option<i64> =
+        conn.query_row("SELECT redo_of FROM math_sessions WHERE id = ?1", params![id], |r| {
+            r.get(0)
+        })?;
     // 必须在写回本次成绩之前取「旧纪录」，否则本次会把自己算进去
     let before_best = best_ms(conn, total)?;
     // 改状态 + 汇总 + 写回必须原子：中途被杀会留下 status='finished' 但 correct_total 为空的卷，
@@ -324,8 +348,10 @@ pub fn finish(conn: &Connection, id: i64) -> AppResult<MathResultDto> {
     )?;
     tx.commit()?;
     let mut out = result_of(conn, id)?;
-    // 只有全对才叫「最快纪录」；重复交卷时 before_best 已含本次，自然不会再判新纪录
-    out.new_best = correct_total == total
+    // 只有全对才叫「最快纪录」；重做卷不参与（同题量只做错题，用时与正式卷不可比）；
+    // 重复交卷时 before_best 已含本次，自然不会再判新纪录
+    out.new_best = redo_of.is_none()
+        && correct_total == total
         && match before_best {
             Some(b) => duration_ms < b,
             None => true,
@@ -333,12 +359,13 @@ pub fn finish(conn: &Connection, id: i64) -> AppResult<MathResultDto> {
     Ok(out)
 }
 
-/// 本题量的历史全对最快（分钟级的比较，忽略未答完/没交卷的卷）
+/// 本题量的历史全对最快（分钟级的比较，忽略未答完/没交卷的卷；错题重做卷不参与）
 fn best_ms(conn: &Connection, total: i64) -> AppResult<Option<i64>> {
     let v = conn.query_row(
         "SELECT MIN(duration_ms) FROM math_sessions
          WHERE status = 'finished' AND total = ?1
-           AND correct_total = total AND duration_ms IS NOT NULL",
+           AND correct_total = total AND duration_ms IS NOT NULL
+           AND redo_of IS NULL",
         params![total],
         |r| r.get::<_, Option<i64>>(0),
     )?;
@@ -347,11 +374,17 @@ fn best_ms(conn: &Connection, total: i64) -> AppResult<Option<i64>> {
 
 /// 成绩单（只读）：记录页回看用，不做任何写入
 pub fn result_of(conn: &Connection, id: i64) -> AppResult<MathResultDto> {
-    let (total, correct_total, duration_ms, status): (i64, Option<i64>, Option<i64>, String) = conn
+    let (total, correct_total, duration_ms, status, redo_of): (
+        i64,
+        Option<i64>,
+        Option<i64>,
+        String,
+        Option<i64>,
+    ) = conn
         .query_row(
-            "SELECT total, correct_total, duration_ms, status FROM math_sessions WHERE id = ?1",
+            "SELECT total, correct_total, duration_ms, status, redo_of FROM math_sessions WHERE id = ?1",
             params![id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .optional()?
         .ok_or_else(missing)?;
@@ -372,6 +405,7 @@ pub fn result_of(conn: &Connection, id: i64) -> AppResult<MathResultDto> {
         wrong_seqs,
         best_ms: best_ms(conn, total)?,
         new_best: false,
+        redo_of,
         items,
     })
 }
@@ -383,12 +417,13 @@ pub fn list(conn: &Connection, limit: i64) -> AppResult<Vec<MathSummaryDto>> {
         "SELECT s.id, s.seed, s.total,
                 (SELECT COUNT(*) FROM math_items i
                   WHERE i.session_id = s.id AND i.input IS NOT NULL),
-                s.correct_total, s.duration_ms, s.status, s.started_at, s.finished_at,
+                s.correct_total, s.duration_ms, s.status, s.started_at, s.finished_at, s.redo_of,
                 COALESCE((s.status = 'finished' AND s.correct_total = s.total
-                 AND s.duration_ms IS NOT NULL
+                 AND s.duration_ms IS NOT NULL AND s.redo_of IS NULL
                  AND s.duration_ms = (SELECT MIN(m.duration_ms) FROM math_sessions m
                       WHERE m.status = 'finished' AND m.total = s.total
-                        AND m.correct_total = m.total AND m.duration_ms IS NOT NULL)), 0)
+                        AND m.correct_total = m.total AND m.duration_ms IS NOT NULL
+                        AND m.redo_of IS NULL)), 0)
          FROM math_sessions s
          WHERE s.status <> 'abandoned'
          -- 按「最后一次动过」排序：三天前开的卷今天才交，得出现在列表最上面
@@ -407,14 +442,15 @@ pub fn list(conn: &Connection, limit: i64) -> AppResult<Vec<MathSummaryDto>> {
                 status: r.get(6)?,
                 started_at: r.get(7)?,
                 finished_at: r.get(8)?,
-                is_best: r.get::<_, Option<i64>>(9)?.unwrap_or(0) != 0,
+                redo_of: r.get(9)?,
+                is_best: r.get::<_, Option<i64>>(10)?.unwrap_or(0) != 0,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
-/// 各题量的全对最快（并列最快取最近一次）
+/// 各题量的全对最快（并列最快取最近一次；错题重做卷不参与）
 pub fn best_times(conn: &Connection) -> AppResult<Vec<MathBestDto>> {
     let mut stmt = conn.prepare(
         "SELECT total, best_ms, achieved_at FROM (
@@ -427,7 +463,7 @@ pub fn best_times(conn: &Connection) -> AppResult<Vec<MathBestDto>> {
                   ) AS rn
            FROM math_sessions s
            WHERE s.status = 'finished' AND s.correct_total = s.total
-             AND s.duration_ms IS NOT NULL
+             AND s.duration_ms IS NOT NULL AND s.redo_of IS NULL
          ) WHERE rn = 1 ORDER BY total",
     )?;
     let rows = stmt
@@ -456,6 +492,83 @@ pub fn abandon(conn: &Connection, id: i64) -> AppResult<()> {
         params![id],
     )?;
     Ok(())
+}
+
+/// 库里存的运算符单字符还原成 `Op`（与 `Op::as_str` 互逆；CHECK 约束保证只有这四个）
+fn op_of(raw: &str) -> AppResult<Op> {
+    match raw {
+        "m" => Ok(Op::Mul),
+        "d" => Ok(Op::Div),
+        "a" => Ok(Op::Add),
+        "s" => Ok(Op::Sub),
+        _ => Err(AppError::msg("这张卷里的运算符数据坏了，没法重做")),
+    }
+}
+
+/// 重做错题：把一张**已交卷**卷子里的错题（含没做/空着的）复制成一张新的 running 卷，
+/// 题号从 1 重新编、作答与用时清零，做完单独出成绩。来源卷原样保留在记录里。
+/// 新卷 `redo_of` 指回来源卷（config_json 里也记一份 redoOf 便于追溯）；
+/// 重做卷不参与「全对最快」纪录。重做卷交卷后如果还有错题，可以继续再重做。
+pub fn redo_wrong(conn: &Connection, id: i64) -> AppResult<MathPracticeDto> {
+    let head = conn
+        .query_row(
+            "SELECT seed, config_json, status FROM math_sessions WHERE id = ?1",
+            params![id],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(missing)?;
+    let (seed, config_json, status) = head;
+    if status != "finished" {
+        return Err(AppError::msg("这张卷还没交卷，先交卷才能重做错题"));
+    }
+    // 错题 = 没做（NULL）与做错（0）的题，按原题号顺序复制
+    let wrong = {
+        let mut stmt = conn.prepare(
+            "SELECT a, b, c, d, t, op1, op2, blank_pos FROM math_items
+             WHERE session_id = ?1 AND (correct IS NULL OR correct = 0)
+             ORDER BY seq",
+        )?;
+        let rows = stmt
+            .query_map(params![id], |r| {
+                Ok((
+                    r.get::<_, i32>(0)?,
+                    r.get::<_, i32>(1)?,
+                    r.get::<_, i32>(2)?,
+                    r.get::<_, i32>(3)?,
+                    r.get::<_, i32>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, String>(6)?,
+                    r.get::<_, u8>(7)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    if wrong.is_empty() {
+        return Err(AppError::msg("这张卷没有错题，不用重做"));
+    }
+    let mut questions = Vec::with_capacity(wrong.len());
+    let mut blanks = Vec::with_capacity(wrong.len());
+    for (a, b, c, d, t, op1, op2, blank) in wrong {
+        questions.push(MathQuestion { a, b, c, t, d, op1: op_of(&op1)?, op2: op_of(&op2)? });
+        blanks.push(blank);
+    }
+    // 条件快照沿用来源卷的，再记一笔 redoOf；旧数据 config_json 坏了（非法 JSON、
+    // 或合法但不是对象——数组/数字等塞不下 redoOf 键）也不挡重做，退回空对象
+    let mut cfg: serde_json::Value =
+        serde_json::from_str(&config_json).unwrap_or_else(|_| serde_json::json!({}));
+    if !cfg.is_object() {
+        cfg = serde_json::json!({});
+    }
+    cfg["redoOf"] = serde_json::json!(id);
+    insert_session(conn, seed as u32, &cfg.to_string(), &MathSheet { questions, blanks }, Some(id))
 }
 
 #[cfg(test)]
@@ -756,5 +869,155 @@ mod tests {
         assert_eq!(n, 0, "题目要随卷级联删除");
         assert!(get(&conn, p.id).is_err());
         assert!(delete(&conn, p.id).is_err());
+    }
+
+    #[test]
+    fn redo_wrong_copies_wrong_items_into_new_sheet() {
+        let conn = db::open_memory();
+        let s = sheet();
+        let p = create(&conn, SEED, "{}", &s).unwrap();
+        // 前 3 道做错、接着 5 道做对、其余 22 道没做
+        for i in 0..3 {
+            answer(&conn, p.id, i as i64, &(answer_of(&s, i) + 1).to_string(), Some(500)).unwrap();
+        }
+        for i in 3..8 {
+            answer(&conn, p.id, i as i64, &answer_of(&s, i).to_string(), Some(500)).unwrap();
+        }
+        finish(&conn, p.id).unwrap();
+
+        let redo = redo_wrong(&conn, p.id).unwrap();
+        assert_eq!(redo.status, "running");
+        assert_eq!(redo.redo_of, Some(p.id));
+        assert_eq!(redo.total, 25, "3 道做错 + 22 道没做，全算错题");
+        assert!(redo.items.iter().all(|it| it.input.is_none() && it.correct.is_none()));
+        let expected: Vec<usize> = (0..3).chain(8..30).collect();
+        for (k, it) in redo.items.iter().enumerate() {
+            let src = &s.questions[expected[k]];
+            assert_eq!(it.seq, k as i64, "重做卷题号从 0 重新编");
+            assert_eq!((it.a, it.b, it.c, it.d), (src.a, src.b, src.c, src.d));
+            assert_eq!(it.blank_pos, s.blanks[expected[k]]);
+        }
+
+        // 来源卷原样保留，重做不覆盖它
+        let src = get(&conn, p.id).unwrap();
+        assert_eq!(src.status, "finished");
+        assert_eq!(src.items.len(), 30);
+
+        // 重做卷走正常做题/交卷流程，做完有自己的成绩
+        for it in &redo.items {
+            let v = math::value_at([it.a, it.b, it.c, it.d], it.blank_pos);
+            answer(&conn, redo.id, it.seq, &v.to_string(), Some(400)).unwrap();
+        }
+        let r = finish(&conn, redo.id).unwrap();
+        assert_eq!(r.correct_total, 25);
+        assert_eq!(r.redo_of, Some(p.id));
+        // 全对之后没有错题可重做
+        assert!(redo_wrong(&conn, redo.id).is_err());
+    }
+
+    #[test]
+    fn redo_wrong_requires_finished_sheet_with_wrong_items() {
+        let conn = db::open_memory();
+        let s = sheet();
+        let p = create(&conn, SEED, "{}", &s).unwrap();
+        assert!(redo_wrong(&conn, p.id).is_err(), "没交卷的卷没有判题结果，不能重做");
+        answer_all(&conn, &s, p.id, 1000, 0);
+        finish(&conn, p.id).unwrap();
+        assert!(redo_wrong(&conn, p.id).is_err(), "全对的卷没有错题");
+        assert!(redo_wrong(&conn, 9999).is_err());
+    }
+
+    #[test]
+    fn redo_wrong_tolerates_broken_config_json() {
+        let conn = db::open_memory();
+        let s = sheet();
+        let p = create(&conn, SEED, "{}", &s).unwrap();
+        answer_all(&conn, &s, p.id, 1000, 3);
+        finish(&conn, p.id).unwrap();
+        // 同步/外部工具可能写进坏数据：config_json 是合法 JSON 但不是对象时，
+        // serde_json 的下标赋值会 panic——重做要退回空对象继续开卷
+        conn.execute(
+            "UPDATE math_sessions SET config_json = '[1,2]' WHERE id = ?1",
+            params![p.id],
+        )
+        .unwrap();
+        let redo = redo_wrong(&conn, p.id).unwrap();
+        assert_eq!(redo.total, 3, "3 道做错，其余都对");
+        assert_eq!(redo.redo_of, Some(p.id));
+    }
+
+    #[test]
+    fn redo_sheets_do_not_claim_best_records() {
+        let conn = db::open_memory();
+        let s5 = math::generate_count(
+            SEED,
+            BlankSel::Two,
+            Op1Sel::Fixed(math::Op::Mul),
+            Op2Sel::Random,
+            &MathRanges::default(),
+            5,
+        )
+        .expect("5 题应能出卷");
+
+        // 正式 5 题卷：全对 2000ms/题 → 「5 道全对最快」= 10s
+        let base = create(&conn, SEED, "{}", &s5).unwrap();
+        answer_all(&conn, &s5, base.id, 2000, 0);
+        assert!(finish(&conn, base.id).unwrap().new_best);
+
+        // 另一张 5 题卷全错 → 重做卷同样 5 道、全对更快，但不能抢纪录
+        let bad = create(&conn, SEED + 1, "{}", &s5).unwrap();
+        answer_all(&conn, &s5, bad.id, 100, 5);
+        finish(&conn, bad.id).unwrap();
+        let redo = redo_wrong(&conn, bad.id).unwrap();
+        assert_eq!(redo.total, 5);
+        for it in &redo.items {
+            let v = math::value_at([it.a, it.b, it.c, it.d], it.blank_pos);
+            answer(&conn, redo.id, it.seq, &v.to_string(), Some(100)).unwrap();
+        }
+        let rr = finish(&conn, redo.id).unwrap();
+        assert_eq!(rr.correct_total, 5);
+        assert!(!rr.new_best, "重做卷只做错题，全对再快也不算新纪录");
+        assert_eq!(rr.best_ms, Some(10_000), "5 道的纪录仍是正式卷那次");
+
+        let b5 = best_times(&conn).unwrap().into_iter().find(|b| b.total == 5).unwrap();
+        assert_eq!(b5.best_ms, 10_000);
+
+        // 记录页：重做卷标出 redo_of，不带「最快」；正式卷正常挂「最快」
+        let rows = list(&conn, 10).unwrap();
+        let redo_row = rows.iter().find(|x| x.id == redo.id).unwrap();
+        assert_eq!(redo_row.redo_of, Some(bad.id));
+        assert!(!redo_row.is_best);
+        assert!(rows.iter().find(|x| x.id == base.id).unwrap().is_best);
+
+        // 删掉来源卷：重做卷保留，标记回落成普通卷（迁移 0009 的 ON DELETE SET NULL）
+        delete(&conn, bad.id).unwrap();
+        let kept = get(&conn, redo.id).unwrap();
+        assert_eq!(kept.status, "finished");
+        assert_eq!(kept.redo_of, None);
+    }
+
+    #[test]
+    fn redo_can_be_redone_until_no_wrong_left() {
+        let conn = db::open_memory();
+        let s = sheet();
+        let p = create(&conn, SEED, "{}", &s).unwrap();
+        // 只做前 2 道：一道对、一道错，其余没做 → 错题 29 道
+        answer(&conn, p.id, 0, &answer_of(&s, 0).to_string(), Some(100)).unwrap();
+        answer(&conn, p.id, 1, &(answer_of(&s, 1) + 1).to_string(), Some(100)).unwrap();
+        finish(&conn, p.id).unwrap();
+
+        let r1 = redo_wrong(&conn, p.id).unwrap();
+        assert_eq!(r1.total, 29);
+        // 重做时只把第 1 道（原卷做错的那道）做对，其余空着交卷（全算错）
+        let first = &r1.items[0];
+        let v = math::value_at([first.a, first.b, first.c, first.d], first.blank_pos);
+        answer(&conn, r1.id, 0, &v.to_string(), Some(100)).unwrap();
+        finish(&conn, r1.id).unwrap();
+
+        let r2 = redo_wrong(&conn, r1.id).unwrap();
+        assert_eq!(r2.total, 28, "重做卷还能再重做，错题越做越少");
+        assert_eq!(r2.redo_of, Some(r1.id));
+        assert_eq!((r2.items[0].a, r2.items[0].d), (r1.items[1].a, r1.items[1].d),
+            "再重做的是重做卷里空着交的第一道，做对的那道（r1 的第 0 题）不再出现");
     }
 }

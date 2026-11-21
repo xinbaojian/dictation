@@ -130,6 +130,8 @@ export const api = {
     invoke<MathAnswerAck>("submit_math_answer", { id, seq, input, elapsedMs }),
   finishMathSession: (id: number) => invoke<MathResult>("finish_math_session", { id }),
   abandonMathSession: (id: number) => invoke<void>("abandon_math_session", { id }),
+  /** 重做错题：把一张已交卷卷子的错题复制成一张新卷再做（不参与「全对最快」纪录） */
+  redoMathWrong: (id: number) => invoke<MathPractice>("redo_math_wrong", { id }),
   /** 做题记录（不含已放弃的卷） */
   listMathSessions: (limit = 30) => invoke<MathSummary[]>("list_math_sessions", { limit }),
   /** 回看某一次的成绩单（只读） */

@@ -103,6 +103,7 @@ related: [quiz-flow.md, architecture.md]
 | `correct_total` / `duration_ms` | 交卷后汇总：做对几道、总用时（= 每题 `elapsed_ms` 之和） |
 | `status` | `running` / `finished` / `abandoned`（放弃的卷不进记录页） |
 | `started_at` / `finished_at` | UTC 时间戳 |
+| `redo_of`（0009） | 非空 = 错题重做卷（值为来源卷 id，`ON DELETE SET NULL`）。重做卷把来源卷的错题（含没做/空着）复制成一张新卷再做一遍，**不参与「全对最快」纪录**（题量可能与正式卷相同却只做错题，用时不可比）；记录页标「错题重做」。删来源卷后重做卷保留、标记回落为普通卷（见 ADR-24 的取舍） |
 
 ### math_items（口算每题，0008）
 

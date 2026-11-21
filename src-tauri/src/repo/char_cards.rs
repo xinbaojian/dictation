@@ -75,10 +75,10 @@ mod tests {
     }
 
     #[test]
-    fn user_version_is_8_after_migrations() {
+    fn user_version_matches_migrations() {
         let conn = db::open_memory();
         let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(v, 8, "0008 迁移后 user_version 必须是 8");
+        assert_eq!(v, db::latest_user_version(), "迁移后 user_version 必须与迁移列表一致");
     }
 
     #[test]

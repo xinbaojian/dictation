@@ -346,6 +346,8 @@ export interface MathPractice {
   finishedAt: string | null;
   correctTotal: number | null;
   durationMs: number | null;
+  /** 非空 = 错题重做卷（来源卷 id）；重做卷不参与「全对最快」纪录 */
+  redoOf: number | null;
   items: MathItem[];
 }
 
@@ -367,6 +369,8 @@ export interface MathResult {
   bestMs: number | null;
   /** 本次是否刷新了最快纪录 */
   newBest: boolean;
+  /** 非空 = 错题重做卷（来源卷 id）；重做卷不参与「全对最快」纪录 */
+  redoOf: number | null;
   items: MathItem[];
 }
 
@@ -381,6 +385,8 @@ export interface MathSummary {
   status: "running" | "finished" | "abandoned";
   startedAt: string;
   finishedAt: string | null;
+  /** 非空 = 错题重做卷（来源卷 id）；重做卷不参与「全对最快」纪录 */
+  redoOf: number | null;
   /** 同为该题量的全对最快（并列也算） */
   isBest: boolean;
 }

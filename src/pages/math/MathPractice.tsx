@@ -21,9 +21,11 @@ interface MathPracticeProps {
   onExit: () => void;
   /** 再来一张：回出题页换新卷 */
   onAgain: () => void;
+  /** 重做错题：后端已把错题复制成新卷，按新 sessionId 进做题页 */
+  onRedo: (sessionId: number) => void;
 }
 
-export default function MathPractice({ sessionId, onExit, onAgain }: MathPracticeProps) {
+export default function MathPractice({ sessionId, onExit, onAgain, onRedo }: MathPracticeProps) {
   const [practice, setPractice] = useState<MathPractice | null>(null);
   const [result, setResult] = useState<MathResult | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -31,6 +33,7 @@ export default function MathPractice({ sessionId, onExit, onAgain }: MathPractic
   const [value, setValue] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const [redoing, setRedoing] = useState(false);
   const [askExit, setAskExit] = useState(false);
   const [askSubmit, setAskSubmit] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -201,6 +204,20 @@ export default function MathPractice({ sessionId, onExit, onAgain }: MathPractic
     }
   }, [practice, finishing, notify]);
 
+  /** 重做错题：把这张卷的错题复制成一张新卷，进了新卷就重头做（题号重编、答案清空） */
+  const startRedo = useCallback(async () => {
+    if (!result || redoing) return;
+    setRedoing(true);
+    try {
+      const p = await api.redoMathWrong(result.id);
+      onRedo(p.id);
+    } catch (e) {
+      notify("error", errorMessage(e));
+    } finally {
+      setRedoing(false);
+    }
+  }, [result, redoing, onRedo, notify]);
+
   // Esc 退出、← 上一题（输入框为空时，避免和移动光标冲突）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -243,6 +260,8 @@ export default function MathPractice({ sessionId, onExit, onAgain }: MathPractic
         result={result}
         onAgain={onAgain}
         onExit={onExit}
+        onRedo={() => void startRedo()}
+        redoing={redoing}
         bottom={<Toast notice={notice} />}
       />
     );
@@ -282,6 +301,11 @@ export default function MathPractice({ sessionId, onExit, onAgain }: MathPractic
           <span className="text-sm font-medium text-stone-700">
             第 {index + 1} / {items.length} 题
           </span>
+          {practice.redoOf != null && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800">
+              错题重做
+            </span>
+          )}
           <span className="text-xs text-stone-400">已答 {answeredCount} 题 · 答案交卷后统一公布</span>
         </div>
         <div className="flex items-center gap-4">
@@ -540,16 +564,21 @@ function NumPad({
   );
 }
 
-/** 成绩页：全场统一公布——对几题、用时、错题逐条回看 */
+/** 成绩页：全场统一公布——对几题、用时、错题逐条回看；有错题就能重做一遍 */
 function ResultView({
   result,
   onAgain,
   onExit,
+  onRedo,
+  redoing,
   bottom,
 }: {
   result: MathResult;
   onAgain: () => void;
   onExit: () => void;
+  /** 把这张卷的错题复制成一张新卷再做一遍（没有错题时不显示按钮） */
+  onRedo: () => void;
+  redoing: boolean;
   bottom: ReactNode;
 }) {
   const wrong = result.items.filter((it) => it.correct !== true);
@@ -557,7 +586,9 @@ function ResultView({
   const rate = result.total > 0 ? result.correctTotal / result.total : 0;
   const praise =
     wrong.length === 0
-      ? "全部做对，太棒了！"
+      ? result.redoOf != null
+        ? "错题这次全做对了，太棒了！"
+        : "全部做对，太棒了！"
       : rate >= 0.9
         ? `非常接近满分，错的这 ${wrong.length} 道再看一眼。`
         : rate >= 0.8
@@ -570,7 +601,14 @@ function ResultView({
       <div className="mx-auto w-full max-w-3xl px-8 py-10">
         <div className="rounded-2xl border border-stone-200 bg-white px-8 py-7 shadow-sm">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-stone-400">口算练习 · 已交卷 · {result.total} 道</p>
+            <p className="flex items-center gap-2 text-xs text-stone-400">
+              口算练习 · 已交卷 · {result.total} 道
+              {result.redoOf != null && (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800">
+                  错题重做
+                </span>
+              )}
+            </p>
             {result.newBest && (
               <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-medium text-amber-800">
                 新的全对最快纪录
@@ -636,10 +674,23 @@ function ResultView({
           </button>
           <button
             onClick={onAgain}
-            className="rounded-md bg-stone-800 px-5 py-2 text-sm font-medium text-white hover:bg-stone-900"
+            className={
+              wrong.length > 0
+                ? "rounded-md border border-stone-200 bg-white px-4 py-2 text-sm text-stone-600 hover:bg-stone-50"
+                : "rounded-md bg-stone-800 px-5 py-2 text-sm font-medium text-white hover:bg-stone-900"
+            }
           >
             再来一张
           </button>
+          {wrong.length > 0 && (
+            <button
+              onClick={onRedo}
+              disabled={redoing}
+              className="rounded-md bg-stone-800 px-5 py-2 text-sm font-medium text-white hover:bg-stone-900 disabled:opacity-60"
+            >
+              {redoing ? "正在准备…" : `重做这 ${wrong.length} 道错题`}
+            </button>
+          )}
         </div>
       </div>
       {bottom}

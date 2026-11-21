@@ -131,20 +131,27 @@ export default function MathHistory({ onOpen, onStart }: MathHistoryProps) {
                       {finished && r.durationMs != null ? formatDuration(r.durationMs) : "—"}
                     </td>
                     <td className="py-2.5 text-xs">
-                      {finished ? (
-                        <span className="flex items-center gap-1.5">
-                          <span className={perfect ? "text-emerald-600" : "text-stone-500"}>
-                            {perfect ? "全对" : "已交卷"}
-                          </span>
-                          {r.isBest && (
-                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800">
-                              最快
+                      <span className="flex items-center gap-1.5">
+                        {finished ? (
+                          <>
+                            <span className={perfect ? "text-emerald-600" : "text-stone-500"}>
+                              {perfect ? "全对" : "已交卷"}
                             </span>
-                          )}
-                        </span>
-                      ) : (
-                        <span className="text-amber-700">未交卷（已答 {r.answered} 道）</span>
-                      )}
+                            {r.isBest && (
+                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800">
+                                最快
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-amber-700">未交卷（已答 {r.answered} 道）</span>
+                        )}
+                        {r.redoOf != null && (
+                          <span className="rounded bg-stone-100 px-1.5 py-0.5 text-[11px] text-stone-500">
+                            错题重做
+                          </span>
+                        )}
+                      </span>
                     </td>
                     <td className="whitespace-nowrap py-2.5 pr-8 text-right">
                       <button

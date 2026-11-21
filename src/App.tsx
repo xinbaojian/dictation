@@ -277,6 +277,9 @@ export default function App() {
                 )
               }
               onAgain={() => navigate({ name: "math", page: "sheet" })}
+              onRedo={(sessionId) =>
+                navigate({ name: "math", page: "practice", sessionId, from: route.from })
+              }
             />
           )}
           {route.name === "math" && route.page === "records" && (

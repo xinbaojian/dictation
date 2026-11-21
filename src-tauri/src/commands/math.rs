@@ -118,6 +118,14 @@ pub fn abandon_math_session(state: State<'_, AppState>, id: i64) -> AppResult<()
     math_sessions::abandon(&conn, id)
 }
 
+/// 重做错题：把一张已交卷卷子的错题复制成一张新的 running 卷（成绩单页「重做错题」按钮）。
+/// 重做卷 redo_of 指回来源卷、不参与「全对最快」纪录，交卷后单独出成绩。
+#[tauri::command]
+pub fn redo_math_wrong(state: State<'_, AppState>, id: i64) -> AppResult<MathPracticeDto> {
+    let conn = state.conn()?;
+    math_sessions::redo_wrong(&conn, id)
+}
+
 /// 做题记录列表（不含已放弃的卷；未交卷的也在里面，可以接着做）
 #[tauri::command]
 pub fn list_math_sessions(state: State<'_, AppState>, limit: i64) -> AppResult<Vec<MathSummaryDto>> {

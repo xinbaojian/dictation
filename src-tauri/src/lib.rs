@@ -94,6 +94,7 @@ pub fn run() {
             commands::math::submit_math_answer,
             commands::math::finish_math_session,
             commands::math::abandon_math_session,
+            commands::math::redo_math_wrong,
             commands::math::list_math_sessions,
             commands::math::get_math_result,
             commands::math::math_best_times,

@@ -426,7 +426,9 @@ export default function MathSheetPage({
         <div className="ms-stack">
           {prevRunning && (
             <div className="no-print mb-3 flex w-[210mm] max-w-full items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">
-              <span className="font-medium">上次那张卷还没交卷</span>
+              <span className="font-medium">
+                {prevRunning.redoOf != null ? "上次的错题重做还没做完" : "上次那张卷还没交卷"}
+              </span>
               <span className="text-amber-700">
                 已答 {prevRunning.items.filter((it) => it.input !== null).length} / {prevRunning.total} 题
                 （下面这张是新卷）
@@ -563,11 +565,13 @@ export default function MathSheetPage({
 
         {running && (
           <ConfirmModal
-            title="上次的口算还没交卷"
+            title={running.redoOf != null ? "上次的错题重做还没交卷" : "上次的口算还没交卷"}
             body={
               resumeAnswered >= running.total
                 ? `${running.total} 题都答完了，只是还没交卷。继续去交卷，还是换现在这张新卷？`
-                : `上次那张卷做到第 ${resumeNext} 题（共 ${running.total} 题，已答 ${resumeAnswered} 题）。接着上次做，还是换现在这张新卷？`
+                : running.redoOf != null
+                  ? `上次的错题重做做到第 ${resumeNext} 题（共 ${running.total} 题，已答 ${resumeAnswered} 题）。接着做完，还是换现在这张新卷？`
+                  : `上次那张卷做到第 ${resumeNext} 题（共 ${running.total} 题，已答 ${resumeAnswered} 题）。接着上次做，还是换现在这张新卷？`
             }
             confirmText="继续上次"
             cancelText="取消"
